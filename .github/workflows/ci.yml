@@ -27,7 +27,7 @@ jobs:
       - name: Install AMD GPU dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential curl libdrm-dev libdrm-amdgpu1
+          sudo apt-get install -y build-essential binutils curl jq python3 libdrm-dev libdrm-amdgpu1
 
       - name: Install Rust toolchain
         run: |
@@ -277,14 +277,6 @@ jobs:
   # ═══════════════════════════════════════════════════════════════
   # Exercises `all-smi service` end to end against a real systemd, in
   # BOTH scopes, on every run (issue #330).
-  #
-  # This job intentionally remains on GitHub-hosted Ubuntu: the ARC
-  # runner is an unprivileged container pod, not a systemd host. `sudo`
-  # grants root inside the container but cannot make systemd PID 1, expose
-  # the host system bus/cgroups, or provide the required service manager.
-  # Running this lifecycle there would fail its system-scope assertions or
-  # require weakening the test. Keep it on a VM until ARC offers a suitable
-  # systemd-capable environment.
   #
   # These used to be an either/or: a probe set `user_scope`, the
   # user-scope step ran when it was true and the system-scope step when
@@ -1113,7 +1105,7 @@ jobs:
       - name: Install AMD GPU dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential curl libdrm-dev libdrm-amdgpu1
+          sudo apt-get install -y build-essential binutils curl jq python3 libdrm-dev libdrm-amdgpu1
 
       - name: Install Rust toolchain
         run: |
