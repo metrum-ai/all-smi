@@ -27,7 +27,13 @@ jobs:
       - name: Install AMD GPU dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libdrm-dev libdrm-amdgpu1
+          sudo apt-get install -y curl libdrm-dev libdrm-amdgpu1
+
+      - name: Install Rust toolchain
+        run: |
+          set -eu
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       # protoc: cached install via composite action
       - name: Setup protoc
@@ -1107,7 +1113,13 @@ jobs:
       - name: Install AMD GPU dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libdrm-dev libdrm-amdgpu1
+          sudo apt-get install -y curl libdrm-dev libdrm-amdgpu1
+
+      - name: Install Rust toolchain
+        run: |
+          set -eu
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       # protoc: cached install via composite action
       - name: Setup protoc
