@@ -27,7 +27,7 @@ jobs:
       - name: Install AMD GPU dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl libdrm-dev libdrm-amdgpu1
+          sudo apt-get install -y build-essential curl libdrm-dev libdrm-amdgpu1
 
       - name: Install Rust toolchain
         run: |
@@ -1113,7 +1113,7 @@ jobs:
       - name: Install AMD GPU dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl libdrm-dev libdrm-amdgpu1
+          sudo apt-get install -y build-essential curl libdrm-dev libdrm-amdgpu1
 
       - name: Install Rust toolchain
         run: |
