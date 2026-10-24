@@ -38,11 +38,16 @@ jobs:
   # there is a single source of truth for the platform list.
   setup:
     name: Resolve build matrix
-    runs-on: ubuntu-latest
+    runs-on: all-smi-arc
     outputs:
       includes: ${{ steps.resolve.outputs.includes }}
       all_assets: ${{ steps.resolve.outputs.all_assets }}
     steps:
+      - name: Install matrix resolver prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
       - name: Resolve target platforms
         id: resolve
         env:
@@ -62,10 +67,10 @@ jobs:
           # matrix job instance, so the two shapes coexist without affecting each
           # other.
           ALL='[
-            {"os_family":"linux",   "target":"x86_64-unknown-linux-gnu",    "os":"ubuntu-22.04",             "artifact_name":"all-smi",     "asset_name":"all-smi-linux-x86_64",       "archive_ext":".tar.gz", "protoc_platform":"linux-x86_64"},
-            {"os_family":"linux",   "target":"x86_64-unknown-linux-musl",   "os":"ubuntu-latest",           "artifact_name":"all-smi",     "asset_name":"all-smi-linux-x86_64-musl",  "archive_ext":".tar.gz", "protoc_platform":"linux-x86_64"},
-            {"os_family":"linux",   "target":"aarch64-unknown-linux-gnu",   "os":"ubuntu-22.04-arm",        "artifact_name":"all-smi",     "asset_name":"all-smi-linux-aarch64",      "archive_ext":".tar.gz", "protoc_platform":"linux-aarch_64"},
-            {"os_family":"linux",   "target":"aarch64-unknown-linux-musl",  "os":"ubuntu-24.04-arm",        "artifact_name":"all-smi",     "asset_name":"all-smi-linux-aarch64-musl", "archive_ext":".tar.gz", "protoc_platform":"linux-aarch_64"},
+            {"os_family":"linux",   "target":"x86_64-unknown-linux-gnu",    "os":"all-smi-arc",             "artifact_name":"all-smi",     "asset_name":"all-smi-linux-x86_64",       "archive_ext":".tar.gz", "protoc_platform":"linux-x86_64"},
+            {"os_family":"linux",   "target":"x86_64-unknown-linux-musl",   "os":"all-smi-arc",           "artifact_name":"all-smi",     "asset_name":"all-smi-linux-x86_64-musl",  "archive_ext":".tar.gz", "protoc_platform":"linux-x86_64"},
+            {"os_family":"linux",   "target":"aarch64-unknown-linux-gnu",   "os":"all-smi-arc",        "artifact_name":"all-smi",     "asset_name":"all-smi-linux-aarch64",      "archive_ext":".tar.gz", "protoc_platform":"linux-aarch_64"},
+            {"os_family":"linux",   "target":"aarch64-unknown-linux-musl",  "os":"all-smi-arc",        "artifact_name":"all-smi",     "asset_name":"all-smi-linux-aarch64-musl", "archive_ext":".tar.gz", "protoc_platform":"linux-aarch_64"},
             {"os_family":"macos",   "target":"aarch64-apple-darwin",        "os":"macos-14",                "artifact_name":"all-smi",     "asset_name":"all-smi-macos-aarch64",      "archive_ext":".zip",    "protoc_platform":"osx-aarch_64"},
             {"os_family":"macos",   "target":"x86_64-apple-darwin",         "os":{"group":"macOS x64","labels":"self-hosted-macos-15-x64"}, "artifact_name":"all-smi", "asset_name":"all-smi-macos-x86_64", "archive_ext":".zip", "protoc_platform":"osx-x86_64"},
             {"os_family":"windows", "target":"x86_64-pc-windows-msvc",      "os":"windows-on-macmini02-x64","artifact_name":"all-smi.exe", "asset_name":"all-smi-windows-x86_64",     "archive_ext":".zip",    "protoc_platform":""}
@@ -121,6 +126,9 @@ jobs:
     env:
       BIN_NAME: all-smi
       BUNDLE_ID: ${{ vars.BUNDLE_ID }}
+      CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+      AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
       # Must match the release asset filename version in protoc releases (e.g. "30.2" or "32.0-rc-2")
       PROTOC_VERSION: "31.1"
 
@@ -213,11 +221,11 @@ jobs:
           sudo apt install -y musl-tools
 
       # 5.5) Install AMD GPU dependencies for Linux builds
-      - name: Install AMD GPU dependencies (Linux only)
+      - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
-          sudo apt update
-          sudo apt install -y libdrm-dev libdrm-amdgpu1
+          sudo apt-get update
+          sudo apt-get install -y binutils build-essential curl gcc-aarch64-linux-gnu jq libdrm-dev libdrm-amdgpu1
 
       # 6) Setup protoc (cached) - skip on Windows as TPU support is Linux-only
       - name: Setup protoc
@@ -563,10 +571,15 @@ jobs:
     name: Notify Teams on release
     needs: build
     if: github.event_name == 'release'
-    runs-on: ubuntu-latest
+    runs-on: all-smi-arc
     permissions: {}
 
     steps:
+      - name: Install notification prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl jq
+
       - name: Build Adaptive Card payload
         env:
           TAG:  ${{ github.event.release.tag_name }}
@@ -612,7 +625,7 @@ jobs:
 
   promote-release:
     name: Promote pre-release to release
-    runs-on: ubuntu-latest
+    runs-on: all-smi-arc
     needs: [setup, build]
     # A dispatch has to be able to finish a release too, not only build one.
     # The recovery path this workflow documents (dispatch a fixed release.yml
@@ -624,6 +637,11 @@ jobs:
       (github.event_name == 'release' && github.event.release.prerelease) ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag != '')
     steps:
+      - name: Install GitHub CLI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gh
+
       - name: Promote to full release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

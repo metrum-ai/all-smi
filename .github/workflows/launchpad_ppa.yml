@@ -18,7 +18,7 @@ permissions:
 jobs:
   upload-ppa:
     name: Upload to PPA (${{ matrix.distro }})
-    runs-on: ubuntu-latest
+    runs-on: all-smi-arc
     environment: packaging
     strategy:
       fail-fast: false
@@ -39,6 +39,11 @@ jobs:
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
+
+    - name: Install GitHub CLI prerequisites
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y curl gh jq
 
     - name: Check distribution
       id: check_distro
@@ -94,7 +99,7 @@ jobs:
     - name: Update debian/changelog from release
       if: steps.check_distro.outputs.should_run == 'true'
       run: |
-        sudo apt-get update && sudo apt-get install -y curl jq
+        sudo apt-get update && sudo apt-get install -y curl gh jq
         bash ./debian/update-changelog.sh \
           -d ${{ matrix.distro }} \
           -p lablup/backend-ai \

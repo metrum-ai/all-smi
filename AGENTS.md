@@ -3,7 +3,7 @@
 # Agent instructions for the Metrum all-smi fork
 
 This repo is the Metrum AI fork of [lablup/all-smi](https://github.com/lablup/all-smi)
-(`origin` = `chetan-metrum-ai/all-smi`, `upstream` = `lablup/all-smi`). It adds
+(`origin` = `metrum-ai/all-smi`, `upstream` = `lablup/all-smi`). It adds
 NVIDIA GPM, NVML extras, and the DCGM plugin on top of upstream. These rules apply
 to every coding agent (pi, Claude Code, Codex, Cursor) and to humans.
 

@@ -27,10 +27,15 @@ permissions:
 jobs:
   setup:
     name: Resolve build matrix
-    runs-on: ubuntu-latest
+    runs-on: all-smi-arc
     outputs:
       includes: ${{ steps.resolve.outputs.includes }}
     steps:
+      - name: Install matrix resolver prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
       - name: Resolve target platforms
         id: resolve
         env:
@@ -38,9 +43,9 @@ jobs:
         run: |
           set -euo pipefail
           ALL='[
-            {"os_family":"linux", "target":"x86_64-unknown-linux-gnu",  "os":"ubuntu-22.04",      "artifact_name":"all-smi", "asset_name":"all-smi-linux-x86_64",      "archive_ext":".tar.gz", "protoc_platform":"linux-x86_64"},
-            {"os_family":"linux", "target":"x86_64-unknown-linux-musl", "os":"ubuntu-latest",      "artifact_name":"all-smi", "asset_name":"all-smi-linux-x86_64-musl", "archive_ext":".tar.gz", "protoc_platform":"linux-x86_64"},
-            {"os_family":"linux", "target":"aarch64-unknown-linux-gnu", "os":"ubuntu-22.04-arm",   "artifact_name":"all-smi", "asset_name":"all-smi-linux-aarch64",     "archive_ext":".tar.gz", "protoc_platform":"linux-aarch_64"},
+            {"os_family":"linux", "target":"x86_64-unknown-linux-gnu",  "os":"all-smi-arc",      "artifact_name":"all-smi", "asset_name":"all-smi-linux-x86_64",      "archive_ext":".tar.gz", "protoc_platform":"linux-x86_64"},
+            {"os_family":"linux", "target":"x86_64-unknown-linux-musl", "os":"all-smi-arc",      "artifact_name":"all-smi", "asset_name":"all-smi-linux-x86_64-musl", "archive_ext":".tar.gz", "protoc_platform":"linux-x86_64"},
+            {"os_family":"linux", "target":"aarch64-unknown-linux-gnu", "os":"all-smi-arc",   "artifact_name":"all-smi", "asset_name":"all-smi-linux-aarch64",     "archive_ext":".tar.gz", "protoc_platform":"linux-aarch_64"},
             {"os_family":"macos", "target":"aarch64-apple-darwin",      "os":"macos-14",           "artifact_name":"all-smi", "asset_name":"all-smi-macos-aarch64",     "archive_ext":".zip",    "protoc_platform":"osx-aarch_64"}
           ]'
           sel="$(printf '%s' "${TARGETS:-}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
@@ -76,6 +81,9 @@ jobs:
         include: ${{ fromJSON(needs.setup.outputs.includes) }}
     env:
       PROTOC_VERSION: "31.1"
+      CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+      AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
     steps:
       - name: Checkout code
         # Pinned: fork org requires full-length commit SHAs (not floating tags).
@@ -114,11 +122,11 @@ jobs:
           sudo apt update
           sudo apt install -y musl-tools
 
-      - name: Install AMD GPU dependencies (Linux only)
+      - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
-          sudo apt update
-          sudo apt install -y libdrm-dev libdrm-amdgpu1
+          sudo apt-get update
+          sudo apt-get install -y binutils build-essential curl gcc-aarch64-linux-gnu jq libdrm-dev libdrm-amdgpu1
 
       - name: Setup protoc
         uses: ./.workflow-actions/.github/actions/setup-protoc
