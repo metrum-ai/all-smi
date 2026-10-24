@@ -1165,9 +1165,14 @@ jobs:
           fi
 
           report="${RUNNER_TEMP}/amd-plugin-doctor.json"
+          doctor_rc=0
           ALL_SMI_AMD_PLUGIN="$PWD/target/release/liball_smi_amd.so" \
-            target/release/all-smi doctor --only amd --json > "$report"
+            target/release/all-smi doctor --only amd --json > "$report" || doctor_rc=$?
           cat "$report"
+          if [ "$doctor_rc" -ne 0 ]; then
+            echo "::error::AMD plugin doctor exited $doctor_rc"
+            exit "$doctor_rc"
+          fi
           status=$(jq -r '.checks[] | select(.id=="amd.libamdgpu_top.abi") | .status' "$report")
           message=$(jq -r '.checks[] | select(.id=="amd.libamdgpu_top.abi") | .message' "$report")
           if [ "$status" != pass ] || [[ "$message" != *"ABI v1"* ]]; then
