@@ -1165,8 +1165,9 @@ jobs:
           fi
 
           report="${RUNNER_TEMP}/amd-plugin-doctor.json"
+          sudo install -D -m 755 target/release/liball_smi_amd.so /usr/lib/all-smi/liball_smi_amd.so
           doctor_rc=0
-          ALL_SMI_AMD_PLUGIN="$PWD/target/release/liball_smi_amd.so" \
+          ALL_SMI_AMD_PLUGIN=/usr/lib/all-smi/liball_smi_amd.so \
             target/release/all-smi doctor --only amd --json > "$report" || doctor_rc=$?
           cat "$report"
           if [ "$doctor_rc" -ne 0 ]; then
