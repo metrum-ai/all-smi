@@ -6,9 +6,40 @@ This tree is the Metrum fork of [lablup/all-smi](https://github.com/lablup/all-s
 
 ## Metrum fork releases
 
+- **v0.28.1-metrum.1 (2026/10/25):** Metrum AI syncs the upstream v0.28.1 release tag: RTX Spark N1X/SoC and DLA support, Windows ARM64, frozen Xe counter handling, REBEL100, corrected Gaudi detection, and russh/luwen updates. Preserves Metrum AI NVIDIA GPM/NVML extras, process-lifetime NVML ownership and serialization, external-only DCGM enrichment, and pinned ARC CI. Also includes previously unreleased Metrum AI fixes already validated on main: crate-private GPM sampling helpers under the shared NVML lock (intentional low-level API visibility change), XID watcher lock fairness, DCGM session reconnect after sampling failure, graceful missing-sudo handling, and manual Shadeform GPU validation. Prior validation records remain intact. Main, AMD and DCGM crate versions are 0.28.1. Real-GPU evidence and physical coverage limitations are recorded in `TECHNICAL_REPORTS/deep-telemetry-progress.md`.
+
 - **v0.27.1-metrum.2 (proposed):** Sync upstream commit `4319b4a`, which ignores frozen Intel Xe GT idle counters in the utilization fallback; handle missing `sudo` cleanly; restrict GPM sampling to the process-wide NVML lock (the low-level sampling helpers are no longer public); reduce XID watcher lock hold time while yielding during event bursts; and add a manually dispatched Shadeform GPU validation workflow with a $3/hour cap, cleanup, and redacted artifacts. No release tag is created pending the human's release decision.
 - **v0.27.1-metrum.1 (2026/10/14):** Sync upstream v0.27.1. Upstream adds a display-only `--hide-storage` TUI mode, fixes false remote host disconnects and remote chassis energy and cost totals, bounds remote HTTP response buffering, and cancels timed-out remote fetches. The merge fills the fork deep-telemetry fields on the new upstream test fixtures, the DCGM plugin crate moves to 0.27.1 with the main binary, and the fork gains `AGENTS.md` (Shadeform NVIDIA validation is required before a change is done) and `scripts/dev/remote-release-smoke.sh`. Follow-up: share and serialize process-wide NVML/GPM use, disable the unsafe in-process DCGM hostengine fallback, and back off host-side DCGM reconnects exponentially up to 60 seconds. The GPM-only lock was initially retained while sampling helpers were public; issue #13 later made those helpers crate-private and removed the redundant lock (details and GPU evidence in `TECHNICAL_REPORTS/deep-telemetry-progress.md`).
 - **v0.27.0-metrum.1 (2026/10/08):** Sync upstream through v0.27.0 and the commits after that tag. Upstream adds AWS Neuron (Trainium and Inferentia) monitoring, lower per-tick collection cost on macOS and Linux, Apple Silicon and Rebellions power fixes, AMD GPU power reported in watts, and a README split into task guides. The Launchpad package build now compiles the AMD companion. The fork keeps GPM, NVML extras, and the DCGM plugin, and the plugin crate version moves to 0.27.0 with the main binary.
+
+## v0.28.1 (2026/10/20)
+
+- Added Rebellions REBEL100 (`RBLN-CR13`) support, verified against captures from a 4-card KMD 3.5.1 node; README, the man page, and API.md list the REBEL line (#466).
+- Added per-process NPU utilization for Rebellions from each context's `util_info`, shown in the local TUI GPU% column (#466).
+- Fixed the `model` label of `all_smi_rebellions_device_info` reading `ATOM` for every real card; it now follows the SKU (`ATOM`, `ATOM-Plus`, `ATOM-Max`, `REBEL100`, `REBEL`) (#466).
+- Fixed the `rebellions.driver` doctor check never finding a driver version; it now reports `KMD_version` from `rbln-stat --json` (#466).
+- Fixed Intel Gaudi detection on hosts whose `/dev/accel` nodes belong to another vendor, such as Rebellions REBEL; every accel node is checked and only Habana's vendor ID counts (#465).
+- Fixed the `gaudi.devices` doctor check counting non-Habana accel nodes as Habana nodes (#465).
+- Updated russh to 0.64.1 and the luwen crates to 0.10.0, with a semver-compatible lockfile refresh (#467).
+
+[Full changelog](https://github.com/lablup/all-smi/compare/v0.28.0...v0.28.1)
+
+## v0.28.0 (2026/10/17)
+
+- Added NVIDIA RTX Spark N1X support: the integrated NPU folds into the SoC GPU row as a DLA gauge and sparkline instead of a separate device, and the GPU reports unified memory over NVLink-C2C without PCIe gauges (#460).
+- Added native Windows ARM64 (`aarch64-pc-windows-msvc`) builds and the `all-smi-windows-aarch64` release asset; building on this target requires LLVM with clang on `PATH` (#460).
+- Added `all_smi_dla_power_watts`, `all_smi_dla_frequency_mhz`, `all_smi_dla_clock_memory_mhz`, `all_smi_dla_temperature_celsius`, and `all_smi_dla_max_frequency_mhz` Prometheus gauges, read back by remote view (#460, #462).
+- Added the N1X DLA engine clock, read from D3DKMT node performance data because NVML reports it as unsupported (#462).
+- Added Windows ARM CPU detection with P/E core mapping and a registry processor-name fallback (#460).
+- Added Windows thermal-zone performance counters as a last-resort CPU temperature source (#460).
+- Filled WDDM per-process GPU memory from PDH samples when NVML reports it unavailable (#460).
+- Fixed constant false 100% Intel Xe GPU utilization when a GT idle-residency counter never advances (#458).
+- Fixed the nvidia-smi CSV fallback dividing power draw by 1000 (#460).
+- Stopped retrying the `root\WMI` temperature query every poll after an access-denied error (#460).
+- Added a `windows-11-arm` CI job and a Windows ARM64 release build (#460).
+- Signed the Windows ARM64 release binary on the x86_64 signing runner, so `all-smi-windows-aarch64` ships Authenticode-signed (#464).
+
+[Full changelog](https://github.com/lablup/all-smi/compare/v0.27.1...v0.28.0)
 
 ## v0.27.1 (2026/10/11)
 
@@ -28,6 +59,8 @@ This tree is the Metrum fork of [lablup/all-smi](https://github.com/lablup/all-s
 [Full changelog](https://github.com/lablup/all-smi/compare/v0.27.0...v0.27.1)
 
 ## Release history
+- **v0.28.1 (2026/10/20):** Added Rebellions REBEL100 support with per-process NPU utilization and SKU-based model labels, stopped reporting non-Habana accel nodes as Intel Gaudi, and updated russh and luwen.
+- **v0.28.0 (2026/10/17):** Added NVIDIA RTX Spark N1X and native Windows ARM64 support with DLA metrics on the GPU row, read the N1X DLA engine clock, and fixed false 100% Intel Xe utilization from frozen GT idle counters.
 - **v0.27.1 (2026/10/11):** Added storage hiding, fixed remote host tabs and energy accounting, hardened HTTP collection, repaired Launchpad AMD packaging, refreshed documentation, and updated dependencies.
 - **v0.27.0 (2026/10/02):** Added AWS Neuron (Trainium and Inferentia) monitoring, cut per-tick collection cost on macOS and Linux, fixed Apple Silicon and Rebellions power over-counts, and stopped all_smi_gpu_info label churn
 - **v0.26.3 (2026/09/01):** Fixed local TUI wrapping and duplicated metrics in narrow terminals, accepted comma-separated `--hosts` lists with startup validation, corrected user-facing CLI and doc text, and updated Rust dependencies including nvml-wrapper 0.13

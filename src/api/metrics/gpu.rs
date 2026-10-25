@@ -224,6 +224,48 @@ impl<'a> GpuMetricExporter<'a> {
                 .type_("all_smi_dla_utilization", "gauge")
                 .metric("all_smi_dla_utilization", &base_labels, dla_util);
         }
+
+        // DLA readings the host SoC GPU row carries in `detail` (the RTX
+        // Spark N1X NPU folded into its GPU row, issue #459). Each is
+        // omitted when the key is absent or unparsable.
+        let dla_gauges = [
+            (
+                detail_keys::DLA_POWER_WATTS_DETAIL_KEY,
+                "all_smi_dla_power_watts",
+                "DLA power consumption in watts",
+            ),
+            (
+                detail_keys::DLA_CLOCK_DETAIL_KEY,
+                "all_smi_dla_frequency_mhz",
+                "DLA frequency in MHz",
+            ),
+            (
+                detail_keys::DLA_MAX_CLOCK_DETAIL_KEY,
+                "all_smi_dla_max_frequency_mhz",
+                "DLA maximum frequency in MHz",
+            ),
+            (
+                detail_keys::DLA_CLOCK_MEMORY_DETAIL_KEY,
+                "all_smi_dla_clock_memory_mhz",
+                "DLA memory clock in MHz",
+            ),
+            (
+                detail_keys::DLA_TEMPERATURE_DETAIL_KEY,
+                "all_smi_dla_temperature_celsius",
+                "DLA temperature in celsius",
+            ),
+        ];
+        for (key, metric, help) in dla_gauges {
+            if let Some(value) = info.detail.get(key).and_then(|v| v.parse::<f64>().ok())
+                && value.is_finite()
+            {
+                builder.help(metric, help).type_(metric, "gauge").metric(
+                    metric,
+                    &base_labels,
+                    value,
+                );
+            }
+        }
     }
 
     fn export_apple_silicon_metrics(&self, builder: &mut MetricBuilder, row: &GpuRow<'a>) {
@@ -1937,5 +1979,47 @@ mod tests {
         assert!(slowdown_line.contains("instance=\"node-1\""));
         assert!(slowdown_line.contains("gpu_uuid=\"GPU-ABC\""));
         assert!(slowdown_line.contains("gpu_index=\"0\""));
+    }
+
+    #[test]
+    fn exporter_emits_only_parsable_dla_detail_gauges() {
+        let mut gpu = make_nvidia_gpu();
+        gpu.detail
+            .insert("dla_power_watts".to_string(), "3.5".to_string());
+        gpu.detail
+            .insert("dla_temperature".to_string(), "not-a-number".to_string());
+        gpu.detail
+            .insert("dla_clock_memory_mhz".to_string(), "NaN".to_string());
+        let gpus = vec![gpu];
+        let output = GpuMetricExporter::new(&gpus).export_metrics();
+
+        assert!(output.contains("all_smi_dla_power_watts{"), "{output}");
+        assert!(!output.contains("all_smi_dla_temperature_celsius"));
+        assert!(!output.contains("all_smi_dla_clock_memory_mhz"));
+        assert!(!output.contains("all_smi_dla_frequency_mhz"));
+        assert!(!output.contains("all_smi_dla_max_frequency_mhz"));
+    }
+
+    #[test]
+    fn exporter_emits_dla_engine_clock_and_maximum() {
+        let mut gpu = make_nvidia_gpu();
+        gpu.detail
+            .insert("dla_clock_mhz".to_string(), "430".to_string());
+        gpu.detail
+            .insert("dla_max_frequency_mhz".to_string(), "1562".to_string());
+        let output = GpuMetricExporter::new(&[gpu]).export_metrics();
+
+        assert!(
+            output.contains("# TYPE all_smi_dla_max_frequency_mhz gauge"),
+            "{output}"
+        );
+        let line = |metric: &str| {
+            output
+                .lines()
+                .find(|l| l.starts_with(&format!("{metric}{{")))
+                .map(str::to_string)
+        };
+        assert!(line("all_smi_dla_frequency_mhz").is_some_and(|l| l.ends_with(" 430")));
+        assert!(line("all_smi_dla_max_frequency_mhz").is_some_and(|l| l.ends_with(" 1562")));
     }
 }

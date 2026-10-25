@@ -41,6 +41,30 @@ class ShadeformTests(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, "environment variable is empty"):
                 shadeform.load_api_key()
 
+    def test_explicit_key_id_never_enumerates_keys(self) -> None:
+        with (
+            patch.dict(os.environ, {"SHADEFORM_SSH_KEY_ID": "run-owned-id"}),
+            patch.object(shadeform, "SSH_PUB_PATH") as pub,
+            patch.object(shadeform, "api_request") as api,
+        ):
+            pub.is_file.return_value = True
+            self.assertEqual(shadeform.ensure_ssh_key("fake"), "run-owned-id")
+            api.assert_not_called()
+
+    def test_new_key_registration_never_enumerates_keys(self) -> None:
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(shadeform, "SSH_PUB_PATH") as pub,
+            patch.object(shadeform, "api_request") as api,
+        ):
+            pub.is_file.return_value = True
+            pub.read_text.return_value = "ssh-ed25519 test-public-key"
+            api.return_value = {"id": "new-run-key"}
+            self.assertEqual(shadeform.ensure_ssh_key("fake"), "new-run-key")
+            self.assertEqual(api.call_count, 1)
+            self.assertEqual(api.call_args.args[:2], ("POST", "/sshkeys/add"))
+            self.assertTrue(api.call_args.args[3]["name"].startswith("metrum-allsmi-"))
+
     def test_price_cap_skips_expensive_preferred_type_for_next_gpu(self) -> None:
         types = [
             instance("RTXPro6000", 301),

@@ -499,11 +499,18 @@ NVIDIA MIG (Multi-Instance GPU) metrics are emitted only on hosts where at least
 - `all_smi_gpu_mig_mode` is emitted for every GPU that supports MIG (enabled or disabled), so consumers can detect mode transitions even when no instances are active.
 - To simulate MIG responses in development/testing without MIG hardware, set `ALL_SMI_MOCK_MIG=1` when running with the `mock` feature.
 
-### NVIDIA Jetson Specific Metrics
+### NVIDIA DLA Metrics (Jetson and RTX Spark N1X)
 
-| Metric                    | Description                                 | Unit    | Labels                  |
-|---------------------------|---------------------------------------------|---------|-------------------------|
-| `all_smi_dla_utilization` | DLA (Deep Learning Accelerator) utilization | percent | `gpu_index`, `gpu_name` |
+| Metric                            | Description                                                  | Unit    | Labels                  |
+|-----------------------------------|--------------------------------------------------------------|---------|-------------------------|
+| `all_smi_dla_utilization`         | DLA (Deep Learning Accelerator) utilization                  | percent | `gpu_index`, `gpu_name` |
+| `all_smi_dla_power_watts`         | DLA power consumption                                        | watts   | `gpu_index`, `gpu_name` |
+| `all_smi_dla_frequency_mhz`       | DLA engine clock                                             | MHz     | `gpu_index`, `gpu_name` |
+| `all_smi_dla_max_frequency_mhz`   | DLA maximum engine clock                                     | MHz     | `gpu_index`, `gpu_name` |
+| `all_smi_dla_clock_memory_mhz`    | DLA memory clock                                             | MHz     | `gpu_index`, `gpu_name` |
+| `all_smi_dla_temperature_celsius` | DLA temperature                                              | celsius | `gpu_index`, `gpu_name` |
+
+On the NVIDIA RTX Spark N1X (Windows on ARM64) the NPU that NVML lists as a separate `DLA-` device is folded into the GPU row, so these series carry the GPU's labels instead of a device of their own. Every series except `all_smi_dla_utilization` is omitted when the driver does not report it. NVML exposes no DLA engine clock on N1X, so `all_smi_dla_frequency_mhz` and `all_smi_dla_max_frequency_mhz` come from the NPU adapter's D3DKMT node performance data, the source `nvidia-smi -q` uses for its `DLA Clocks` section; the remote view parses both back and drops values above 100000 MHz.
 
 ### AMD GPU Specific Metrics
 
@@ -634,10 +641,15 @@ The same convention now covers the static details and the health registers. The 
 | `all_smi_rebellions_status`            | Device operational status               | gauge | `npu`, `instance`, `npu_uuid`, `npu_index`, `status`                   |
 | `all_smi_gpu_card_power_watts`         | Power of the card this die sits on, for display only. **Do not sum.** | gauge | `gpu`, `instance`, `gpu_uuid`, `gpu_index` |
 
-Note: Rebellions NPUs come as ATOM, ATOM+ and ATOM Max boards. On ATOM Max a single
+Note: Rebellions NPUs come as ATOM, ATOM+ and ATOM Max boards, and as REBEL100
+(`RBLN-CR13`) in the REBEL line that succeeds ATOM. On ATOM Max a single
 physical card carries four dies, and `rbln-stat` enumerates dies rather than cards --
 group by the `sid` label to recover cards. Both ATOM+ (`RBLN-CA22`) and ATOM Max
 (`RBLN-CA25`) report a PCIe 32.0 GT/s x16 link, i.e. Gen5 x16.
+
+The `model` label of `all_smi_rebellions_device_info` follows the SKU the card reports:
+`RBLN-CA22` is `ATOM-Plus`, `RBLN-CA25` is `ATOM-Max`, any other `RBLN-CA*` is `ATOM`,
+`RBLN-CR13` is `REBEL100`, and any other `RBLN-CR*` is `REBEL`.
 
 Power on ATOM Max: `rbln-stat` reports one power figure per card and repeats it on
 every die. `all_smi_gpu_power_consumption_watts` is therefore emitted once per card,
@@ -653,7 +665,7 @@ times the node's real draw, which is exactly the overcount that the one-series-p
 rule above exists to prevent. Use it per device, or with `max by (sid)`, and sum
 `all_smi_gpu_power_consumption_watts` when you want a total. ATOM+ is one die per card,
 so every ATOM+ device reports its own power and publishes no
-`all_smi_gpu_card_power_watts` series.
+`all_smi_gpu_card_power_watts` series. REBEL100 is one die per card as well.
 
 ### Furiosa NPU Metrics
 

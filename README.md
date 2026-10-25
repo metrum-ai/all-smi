@@ -31,10 +31,11 @@
 | Platform | Hardware / coverage |
 |---|---|
 | Linux | NVIDIA, AMD Radeon/Instinct, Intel Arc/Iris Xe/Xe, NVIDIA Jetson |
-| Linux accelerators | Intel Gaudi, Google Cloud TPU, Tenstorrent Wormhole/Blackhole, Rebellions ATOM family, Furiosa RNGD, AWS Trainium/Inferentia |
+| Linux accelerators | Intel Gaudi, Google Cloud TPU, Tenstorrent Wormhole/Blackhole, Rebellions ATOM/REBEL, Furiosa RNGD, AWS Trainium/Inferentia |
 | macOS (Apple Silicon) | GPU, CPU, memory, ANE power, and thermal metrics; no sudo required |
 | macOS (Intel) | CPU, memory, and chassis metrics; no GPU monitoring |
 | Windows | NVIDIA, AMD, and Intel GPU backends, CPU and memory; sensor coverage depends on drivers and permissions |
+| Windows on ARM64 | NVIDIA RTX Spark N1X: Blackwell GPU with its NPU shown as a DLA gauge, heterogeneous Cortex-X925 / A725 CPU cores; building from source needs LLVM (clang) |
 
 Not every device exposes every metric. See [hardware requirements](docs/installation.md#platform-specific-requirements) for drivers, permissions, and limitations.
 
@@ -129,7 +130,7 @@ Configuration is optional. To keep an exporter running across reboots, follow th
 
 ## Recent Updates
 
-- **v0.27.1 (2026/10/11):** Added storage hiding, fixed remote host tabs and energy accounting, hardened HTTP collection, repaired Launchpad AMD packaging, refreshed documentation, and updated dependencies.
+- **v0.28.1 (2026/10/20):** Added Rebellions REBEL100 support with per-process NPU utilization and SKU-based model labels, stopped reporting non-Habana accel nodes as Intel Gaudi, and updated russh and luwen.
 
 ## Documentation
 

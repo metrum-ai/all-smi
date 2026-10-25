@@ -2,6 +2,26 @@
 
 # Deep-telemetry progress
 
+## v0.28.1-metrum.1 — release validation in progress (Metrum AI)
+
+Merging upstream release tag v0.28.1 (`03e8fd0`) into fork main
+(`2d78f55`), not unreleased upstream/main. The merge combines upstream N1X
+SoC/DLA classification and static-device cache with Metrum AI GPM/NVML
+extras, shared process-lifetime NVML and API serialization, and external-only
+DCGM enrichment. The fork's GPM helper visibility, XID fairness, DCGM reconnect,
+missing-sudo fixes and their earlier validation records below are preserved.
+Main, AMD and DCGM versions are consistently 0.28.1. ARC CI and pinned actions
+are retained; the new upstream Windows ARM64 CI action references are pinned.
+
+Physical validation targets: RTX PRO 6000 Blackwell Server Edition and an
+H100 (or H200/B200 availability fallback). N1X Windows ARM64/SoC/DLA hardware
+is not physically available in these server-GPU runs; CPU unit tests and
+platform CI cover pure classification/folding and compilation, not actual N1X
+telemetry. No destructive XID storm will be induced.
+
+Evidence and rental teardown results will be added before merge/publication.
+
+
 Running log for the Metrum `metrum/deep-telemetry` work. Updated at the end of every phase.
 
 ## P0 — bootstrap
