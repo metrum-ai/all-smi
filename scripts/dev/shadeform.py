@@ -109,23 +109,12 @@ def ensure_ssh_key(api_key: str) -> str:
             f"missing {SSH_PUB_PATH}; generate with: "
             "ssh-keygen -t ed25519 -f .shadeform_ed25519 -N '' -C metrum-allsmi-dev"
         )
+    supplied_id = os.environ.get("SHADEFORM_SSH_KEY_ID")
+    if supplied_id:
+        return supplied_id
     pub = SSH_PUB_PATH.read_text(encoding="utf-8").strip()
-    keys_resp = api_request("GET", "/sshkeys", api_key)
-    existing = (
-        keys_resp
-        if isinstance(keys_resp, list)
-        else (keys_resp or {}).get("ssh_keys") or (keys_resp or {}).get("data") or []
-    )
-    for entry in existing:
-        if not isinstance(entry, dict):
-            continue
-        remote = (entry.get("public_key") or entry.get("key") or "").strip()
-        if remote == pub or pub in remote or remote in pub:
-            key_id = entry.get("id")
-            if not key_id:
-                sys.exit("matching ssh key has no id")
-            return str(key_id)
-    name = "metrum-allsmi-dev"
+    # Register a new run-owned key; never enumerate or reuse account keys.
+    name = "metrum-allsmi-" + datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     payload = {"name": name, "public_key": pub}
     added = api_request("POST", "/sshkeys/add", api_key, payload)
     if not isinstance(added, dict) or not added.get("id"):

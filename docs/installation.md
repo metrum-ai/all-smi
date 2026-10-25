@@ -63,7 +63,7 @@ Download the latest release from the [GitHub releases page](https://github.com/l
 2. Download the appropriate binary for your platform
 3. Extract the archive and place the binary in your `$PATH`. On glibc Linux, keep `liball_smi_amd.so` beside the binary or install it under `/usr/local/lib/all-smi`; the companion provides AMD monitoring without making the main binary depend on libdrm.
 
-> Release binaries are signed: macOS archives are notarized (so Gatekeeper does not block them as coming from an unidentified developer) and Windows binaries are Authenticode code-signed.
+> Release binaries are signed: macOS archives are notarized (so Gatekeeper does not block them as coming from an unidentified developer) and Windows x86_64 binaries are Authenticode code-signed. The Windows ARM64 (`all-smi-windows-aarch64`) binary is built on a GitHub-hosted runner and then Authenticode code-signed on the x86_64 signing runner.
 
 ## Option 5: Install from Cargo
 
@@ -82,6 +82,8 @@ sudo apt-get install pkg-config libssl-dev protobuf-compiler
 # Fedora/RHEL
 sudo dnf install pkg-config openssl-devel protobuf-compiler protobuf-devel
 ```
+
+On Windows on ARM64 (`aarch64-pc-windows-msvc`), install LLVM and put `clang` on `PATH` first, for example with `winget install LLVM.LLVM` (it installs to `C:\Program Files\LLVM\bin`). The `ring` and `aws-lc-sys` crypto crates used by HTTPS and the SSH transport need clang on that target; MSVC alone cannot build them.
 
 After installation, the binary will be available in your `$PATH` as `all-smi`.
 
@@ -147,8 +149,15 @@ all-smi does not ship a container image, and container deployment is not a suppo
     2. AMD Ryzen Master SDK (AMD CPUs - requires AMD drivers or Ryzen Master)
     3. Intel WMI (Intel CPUs - if chipset drivers support it)
     4. LibreHardwareMonitor WMI (any CPU - if [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor) is running)
+    5. ACPI thermal-zone performance counters (`Win32_PerfFormattedData_Counters_ThermalZoneInformation`, any CPU, no Administrator rights; the source that answers on the RTX Spark N1X)
   - If temperature is not available, it will be shown as "N/A" without error messages
   - For best temperature monitoring on Windows, install and run LibreHardwareMonitor in the background
+- **NVIDIA under WDDM:** NVML cannot report per-process GPU memory under the Windows display driver model, so all-smi fills it from the PDH `\GPU Process Memory(*)` counters, the same source the AMD and Intel readers use.
+- **Windows on ARM64 (NVIDIA RTX Spark N1X):**
+  - The integrated NPU, which NVML lists as a second device named `NVIDIA NPU` with a `DLA-` UUID, is shown as a `DLA` gauge and sparkline on the GPU row and exported as `all_smi_dla_utilization`, `all_smi_dla_power_watts`, `all_smi_dla_frequency_mhz`, `all_smi_dla_max_frequency_mhz`, `all_smi_dla_clock_memory_mhz`, and `all_smi_dla_temperature_celsius`, not as a separate device. NVML exposes no DLA engine clock on this driver, so the current and maximum engine clock are read from the NPU adapter's D3DKMT node performance data, matching the `DLA Clocks` section of `nvidia-smi -q`.
+  - The GPU is reported with unified memory over NVLink-C2C, without the PCIe link metrics NVML stubs out as `Gen 1 x1`.
+  - CPU cores are split into Performance (Cortex-X925) and Efficiency (Cortex-A725) from the per-core registry identifiers.
+  - Building from source requires LLVM with `clang` on `PATH` (for example `winget install LLVM.LLVM`), because `ring` and `aws-lc-sys` need clang on `aarch64-pc-windows-msvc`. The release binary needs nothing extra.
 
 ## Accelerator backends on Linux
 

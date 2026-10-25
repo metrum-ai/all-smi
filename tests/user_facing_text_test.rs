@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Metrum AI. All rights reserved.
 // Copyright 2025 Lablup Inc. and Jeongkyu Shin
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -129,6 +130,10 @@ fn release_history_is_separate_from_operator_guidance() {
         "release history belongs in CHANGELOG.md"
     );
     let changelog = include_str!("../CHANGELOG.md");
+    // Metrum AI keeps a copyright notice before the rendered document title.
+    let changelog = changelog
+        .strip_prefix("<!-- Copyright (c) 2026 Metrum AI. All rights reserved. -->\n")
+        .unwrap_or(changelog);
     assert!(changelog.starts_with("# Changelog\n"));
     assert!(changelog.contains("## Release history\n"));
 }

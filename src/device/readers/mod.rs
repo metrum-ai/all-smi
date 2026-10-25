@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Metrum AI. All rights reserved.
 // Copyright 2025 Lablup Inc. and Jeongkyu Shin
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -44,6 +45,14 @@ pub mod nvidia_mig;
 pub(crate) mod nvidia_nvml;
 pub mod nvidia_vgpu;
 pub mod nvidia_xid;
+// N1X DLA engine clock from D3DKMT (#461); compiled under `test` everywhere
+// for the same reason as `windows_gpu_perf` below.
+#[cfg(any(target_os = "windows", test))]
+pub(crate) mod nvidia_dla_clock;
+pub(crate) mod nvidia_soc;
+// WDDM per-process memory for NVIDIA; compiled under `test` everywhere.
+#[cfg(any(target_os = "windows", test))]
+pub(crate) mod nvidia_wddm;
 pub mod rebellions;
 #[cfg(target_os = "linux")]
 pub mod tpu_grpc;

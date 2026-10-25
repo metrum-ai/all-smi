@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Metrum AI. All rights reserved.
 // Copyright 2025 Lablup Inc. and Jeongkyu Shin
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -110,6 +111,16 @@ pub fn hollow_utilization(gpu: &GpuInfo) -> Option<f32> {
     let graphics = gpm.graphics_active?;
     let sm = gpm.sm_active?;
     Some((graphics - sm).max(0.0))
+}
+
+/// Mean DLA utilization (%) across the GPU rows that carry a DLA reading
+/// (Jetson, RTX Spark N1X NPU; issue #459), or `None` when no row does.
+pub fn mean_dla_utilization(gpus: &[GpuInfo]) -> Option<f64> {
+    mean(
+        gpus.iter()
+            .filter_map(|gpu| gpu.dla_utilization)
+            .filter(|u| u.is_finite() && *u >= 0.0),
+    )
 }
 
 fn mean(values: impl Iterator<Item = f64>) -> Option<f64> {

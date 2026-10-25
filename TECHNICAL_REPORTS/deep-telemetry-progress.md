@@ -2,6 +2,128 @@
 
 # Deep-telemetry progress
 
+## v0.28.1-metrum.1 — release validation in progress (Metrum AI)
+
+Merging upstream release tag v0.28.1 (`03e8fd0`) into fork main
+(`2d78f55`), not unreleased upstream/main. The merge combines upstream N1X
+SoC/DLA classification and static-device cache with Metrum AI GPM/NVML
+extras, shared process-lifetime NVML and API serialization, and external-only
+DCGM enrichment. The fork's GPM helper visibility, XID fairness, DCGM reconnect,
+missing-sudo fixes and their earlier validation records below are preserved.
+Main, AMD and DCGM versions are consistently 0.28.1. ARC CI and pinned actions
+are retained; the new upstream Windows ARM64 CI action references are pinned.
+
+Physical validation targets: RTX PRO 6000 Blackwell Server Edition and an
+H100 (or H200/B200 availability fallback). N1X Windows ARM64/SoC/DLA hardware
+is not physically available in these server-GPU runs; CPU unit tests and
+platform CI cover pure classification/folding and compilation, not actual N1X
+telemetry. No destructive XID storm will be induced.
+
+### Container validation
+
+`cargo build --release --workspace` passed, including main and both plugins.
+`cargo test --release` passed with rustc 1.99.1: library 1,960 passed / 1 ignored;
+binary 2,157 passed / 2 ignored; all integration targets; doctests 23 passed /
+13 ignored. The new upstream SoC fixture was extended with the six fork fields.
+The container needed user-local protoc and libdrm linker symlinks, rsync/libpopt,
+and the matching toolchain bin PATH/RUSTDOC; initial dependency/launcher failures
+were corrected and the full test command rerun successfully. Format check and
+10 Python script tests passed, including no SSH-key-enumeration regression tests.
+
+### RTX PRO 6000 Blackwell Server Edition — passed
+
+Driver 580.126.09, CUDA 13.0, DCGM 4.7.0, rustc
+`1.99.1 (58cf8f9c3 2026-10-13)`. `cargo build --release --workspace` passed
+(main, `liball_smi_amd.so`, `liball_smi_dcgm.so`); `cargo test --release`
+passed including doctests. Ten additional **default-parallel**
+`cargo test --release --test library_api_test` runs passed 26/26 each.
+`doctor --only nvidia.gpm,nvidia.dcgm` passed 4/4 with the external service
+active; AMD doctor had 3 passes / 5 expected skips, AMD plugin tests 12/12.
+Fresh live scrapes emitted 20 `source="gpm"` series by default and 13
+`source="dcgm"` series with `ALL_SMI_NVIDIA_DISABLE_GPM=1`. Post-validation
+nvidia-smi remained responsive, with no lingering GPU workload. No embedded
+hostengine was used.
+
+Rental rate $1.95/hour; elapsed create-to-verified-delete 978.5 seconds,
+pro-rata estimate $0.5300 (includes provisioning; provider invoice/rounding
+not independently available). Deleted and confirmed by individual-ID lookup
+at 2026-10-25T19:02:45Z before the H100 rental was created.
+
+Capture-based `gpm_parity` tests ran against historical capture fixtures,
+not a new workload-parity experiment. The fresh hardware evidence above is
+sampling diagnostics, parallel concurrency tests and live telemetry scrapes.
+Detailed raw logs and live scrape evidence are archived in the durable evidence snapshot below.
+
+### ARM64 release cross-build correction
+
+Release preflight found two ARC migration mismatches in the existing fork
+workflow: the ARM64 target selected an ARM64 **host** protoc while Linux now
+runs on x86_64 ARC, and only amd64 libdrm development/runtime packages were
+installed despite building the ARM64 AMD plugin with `libdrm_link` /
+`libdrm_amdgpu_sys/link_drm`. Reproduced the protoc problem locally:
+`uname -m` = x86_64, running upstream protoc v31.1 linux-aarch_64 gives
+**Exec format error**. The missing ARM64 DRM dependency was identified by
+workflow/package feature inspection, not a claimed failed CI link.
+
+The corrected matrix uses x86_64 protoc for the cross target. A dedicated
+Ubuntu ports package index extracts ARM64 libdrm-dev/libdrm2/libdrm-amdgpu1
+without changing global apt sources or installing foreign system packages.
+The isolated sysroot is supplied by target-specific Rust native link flags
+and target-specific pkg-config variables. Existing CC/AR and Cargo ARM64
+linker variables are unchanged. Local execution of extraction and validation
+passed: both linker symlinks resolve **inside** the sysroot, ELF headers are
+AArch64, and target-only `pkg-config --cflags --libs libdrm libdrm_amdgpu`
+finds the extracted target include/library paths. CI additionally asserts
+AArch64 ELF architecture on main, AMD and DCGM outputs. All-platform build-only
+preflight [40224846945](https://github.com/metrum-ai/all-smi/actions/runs/40224846945)
+passed macOS ARM64, Linux x86_64 glibc (including both plugins), and x86_64
+musl packaging/checksums. ARM64 reached and passed package extraction, symlink
+containment and AArch64 library ELF checks, then failed with **pkg-config:
+command not found (exit 127)** on the minimal ARC image. Added explicit
+`pkg-config` installation to Linux dependencies. A corrected Linux build-only
+preflight on the final PR head must pass before publication; its run/results
+are tracked in PR #25 and owner STATUS.md, alongside final-head CI.
+
+### H100 PCIe — passed; GPU/key teardown verified
+
+Driver 570.195.03, CUDA 12.8, DCGM 4.7.0, rustc
+`1.99.1 (58cf8f9c3 2026-10-13)`. Full workspace build passed (1m59s),
+including main, AMD and DCGM. Full `cargo test --release` passed including
+doctests, with the same library/binary/integration result counts as the
+container. Ten additional **default-parallel** `library_api_test` repetitions
+passed 26/26 each. NVIDIA doctor passed 4/4; AMD doctor 3 passes / 5 expected
+skips; AMD plugin tests 12/12. Fresh live default/fallback scrapes emitted
+20 GPM-sourced / 13 DCGM-sourced series respectively. External hostengine
+only; post-validation nvidia-smi responsive, no residual GPU workload.
+
+Rate $2.50/hour; create-to-verified-delete elapsed 992.1 seconds; pro-rata
+estimate $0.6890. H100 deletion individually verified at
+2026-10-25T19:19:18Z. Combined Blackwell + H100 estimate **$1.2190**; includes
+provisioning, not a verified provider invoice or billing-rounding total.
+A final separate lookup confirmed both run-owned GPU IDs had state=deleted.
+The run-owned registered SSH key was deleted (HTTP 200) and its individual
+info lookup returned HTTP 404. Local key material was removed and the
+independent finite-deadline watcher stopped only after verified cleanup.
+No account SSH-key enumeration or managed key was used; no unrelated
+resources were touched. Instance/key identifiers are retained privately in
+the owner status, not in public release notes.
+
+Sanitized full build/test/doctor/concurrency logs, fresh live scrapes and
+cross-build reproduction/sysroot checks are durably archived as artifact
+snapshot **40448ee6**, tags **product=all-smi / project=v0.28.1-metrum.1 /
+task=gpu-validation** (earlier partial snapshot a0c31227). The GPU-tested telemetry
+implementation is merge commit 8d5c9be; subsequent changes are release workflow,
+docs/evidence, nonfunctional copyright comments, and a document-title test
+adaptation for the required leading copyright notice, with no telemetry
+behavior changes. A repeated local test run exposed the existing timing-sensitive
+SSE lag-event test (expected lag, received snapshot); subsequent full reruns
+retain normal parallelism and do not exclude or serialize it. The new leading
+CHANGELOG copyright comment also exposed the upstream title guard's strict
+starts-with assumption; the guard now strips only the exact Metrum AI copyright
+line before enforcing the same title/release-history assertions. Final PR-head CI is required separately before merge/publication;
+see [PR #25](https://github.com/metrum-ai/all-smi/pull/25).
+
+
 Running log for the Metrum `metrum/deep-telemetry` work. Updated at the end of every phase.
 
 ## P0 — bootstrap

@@ -64,6 +64,7 @@ The main `all-smi` package does not link libdrm, so `cargo build` and `cargo bui
 
 **Windows:**
 - Not officially supported, but may work with WSL2
+- On Windows on ARM64 (`aarch64-pc-windows-msvc`), install LLVM and put `clang` on `PATH` (for example `winget install LLVM.LLVM`, then add `C:\Program Files\LLVM\bin` to `PATH`). The `ring` and `aws-lc-sys` crates need clang on that target; MSVC alone cannot build them
 
 ### Setting Up the Repository
 
@@ -676,8 +677,8 @@ Downloadable binaries for the Metrum deep-telemetry fork are built by
 [`.github/workflows/metrum-release.yml`](.github/workflows/metrum-release.yml)
 on GitHub-hosted runners only (linux x86_64 gnu/musl, linux aarch64, macos
 aarch64 unsigned). Assets land on
-https://github.com/chetan-metrum-ai/all-smi/releases under tags like
-`v0.27.1-metrum.2`. Prefer `all-smi-linux-x86_64.tar.gz` on GPU servers.
+https://github.com/metrum-ai/all-smi/releases under tags like
+`v0.28.1-metrum.1`. Prefer `all-smi-linux-x86_64.tar.gz` on GPU servers.
 
 Do not use the upstream `release.yml` on this fork: it requires self-hosted
 Windows/Intel-Mac runners, Apple notarization secrets, and Homebrew/PPA jobs
