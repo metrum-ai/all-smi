@@ -1,7 +1,7 @@
 # Copyright (c) 2026 Metrum AI, Inc. All rights reserved.
 #
-# Metrum fork release builder. GitHub-hosted runners only — no self-hosted
-# Windows/Intel-Mac, no Apple notarization, no Homebrew/PPA/Teams.
+# Metrum fork release builder. Linux on ARC DOKS, macOS ARM64 hosted — no
+# Windows/Intel-Mac signing hosts, Apple notarization, Homebrew/PPA/Teams.
 # Do not publish a public tag until after P4 (real GPM + DCGM plugin).
 # Tags use a metrum suffix (e.g. v0.26.3-metrum.1) so they never collide
 # with lablup/all-smi release tags.
@@ -45,7 +45,7 @@ jobs:
           ALL='[
             {"os_family":"linux", "target":"x86_64-unknown-linux-gnu",  "os":"all-smi-arc",      "artifact_name":"all-smi", "asset_name":"all-smi-linux-x86_64",      "archive_ext":".tar.gz", "protoc_platform":"linux-x86_64"},
             {"os_family":"linux", "target":"x86_64-unknown-linux-musl", "os":"all-smi-arc",      "artifact_name":"all-smi", "asset_name":"all-smi-linux-x86_64-musl", "archive_ext":".tar.gz", "protoc_platform":"linux-x86_64"},
-            {"os_family":"linux", "target":"aarch64-unknown-linux-gnu", "os":"all-smi-arc",   "artifact_name":"all-smi", "asset_name":"all-smi-linux-aarch64",     "archive_ext":".tar.gz", "protoc_platform":"linux-aarch_64"},
+            {"os_family":"linux", "target":"aarch64-unknown-linux-gnu", "os":"all-smi-arc",   "artifact_name":"all-smi", "asset_name":"all-smi-linux-aarch64",     "archive_ext":".tar.gz", "protoc_platform":"linux-x86_64"},
             {"os_family":"macos", "target":"aarch64-apple-darwin",      "os":"macos-14",           "artifact_name":"all-smi", "asset_name":"all-smi-macos-aarch64",     "archive_ext":".zip",    "protoc_platform":"osx-aarch_64"}
           ]'
           sel="$(printf '%s' "${TARGETS:-}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
@@ -128,6 +128,40 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y binutils build-essential curl gcc-aarch64-linux-gnu jq libdrm-dev libdrm-amdgpu1
 
+      # protoc executes on the ARC x86_64 host, even for the ARM64 target.
+      - name: Install ARM64 DRM cross-link libraries
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        shell: bash
+        run: |
+          set -euo pipefail
+          source /etc/os-release
+          test "$ID" = ubuntu
+          ROOT="$RUNNER_TEMP/arm64-drm"
+          mkdir -p "$ROOT/lists/partial" "$ROOT/debs" "$ROOT/sysroot"
+          printf 'deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports %s main universe\n' \
+            "$VERSION_CODENAME" "${VERSION_CODENAME}-updates" "${VERSION_CODENAME}-security" > "$ROOT/sources.list"
+          OPTS=(-o APT::Architecture=arm64 -o APT::Architectures=arm64
+            -o "Dir::Etc::sourcelist=$ROOT/sources.list" -o Dir::Etc::sourceparts=-
+            -o "Dir::State::lists=$ROOT/lists" -o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache=)
+          sudo apt-get "${OPTS[@]}" update
+          cd "$ROOT/debs"
+          apt-get "${OPTS[@]}" download libdrm-dev:arm64 libdrm2:arm64 libdrm-amdgpu1:arm64
+          for package in *.deb; do dpkg-deb -x "$package" "$ROOT/sysroot"; done
+          for library in libdrm.so libdrm_amdgpu.so; do
+            resolved="$(realpath -e "$ROOT/sysroot/usr/lib/aarch64-linux-gnu/$library")"
+            case "$resolved" in "$ROOT/sysroot/"*) ;; *) echo "Library escaped sysroot: $resolved"; exit 1 ;; esac
+            aarch64-linux-gnu-readelf -h "$resolved" | grep -q 'Machine:.*AArch64'
+          done
+          PKG_CONFIG_SYSROOT_DIR="$ROOT/sysroot" \
+            PKG_CONFIG_LIBDIR="$ROOT/sysroot/usr/lib/aarch64-linux-gnu/pkgconfig" \
+            pkg-config --cflags --libs libdrm libdrm_amdgpu
+          {
+            echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS=-Lnative=$ROOT/sysroot/usr/lib/aarch64-linux-gnu"
+            echo "PKG_CONFIG_SYSROOT_DIR_aarch64_unknown_linux_gnu=$ROOT/sysroot"
+            echo "PKG_CONFIG_LIBDIR_aarch64_unknown_linux_gnu=$ROOT/sysroot/usr/lib/aarch64-linux-gnu/pkgconfig"
+            echo "PKG_CONFIG_ALLOW_CROSS_aarch64_unknown_linux_gnu=1"
+          } >> "$GITHUB_ENV"
+
       - name: Setup protoc
         uses: ./.workflow-actions/.github/actions/setup-protoc
         with:
@@ -160,6 +194,15 @@ jobs:
           cargo build --release --target ${{ matrix.target }} --locked -p all-smi-dcgm-plugin
           test -f "target/${{ matrix.target }}/release/liball_smi_dcgm.so"
           echo "DCGM_PLUGIN_BUILT=true" >> "$GITHUB_ENV"
+
+      - name: Verify ARM64 binary and plugin architecture
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for artifact in all-smi liball_smi_amd.so liball_smi_dcgm.so; do
+            aarch64-linux-gnu-readelf -h "target/${{ matrix.target }}/release/$artifact" | grep -q 'Machine:.*AArch64'
+          done
 
       - name: Package Linux binary (tar.gz)
         if: runner.os == 'Linux'
