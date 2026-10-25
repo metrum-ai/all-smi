@@ -1,3 +1,4 @@
+// Copyright (c) 2026 Metrum AI. All rights reserved.
 // Copyright 2025 Lablup Inc. and Jeongkyu Shin
 //
 // Licensed under the Apache License, Version 2.0 (the "License");

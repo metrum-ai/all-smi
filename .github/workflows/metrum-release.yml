@@ -126,7 +126,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y binutils build-essential curl gcc-aarch64-linux-gnu jq libdrm-dev libdrm-amdgpu1
+          sudo apt-get install -y binutils build-essential curl gcc-aarch64-linux-gnu jq pkg-config libdrm-dev libdrm-amdgpu1
 
       # protoc executes on the ARC x86_64 host, even for the ARM64 target.
       - name: Install ARM64 DRM cross-link libraries

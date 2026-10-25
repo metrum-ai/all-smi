@@ -677,7 +677,7 @@ Downloadable binaries for the Metrum deep-telemetry fork are built by
 [`.github/workflows/metrum-release.yml`](.github/workflows/metrum-release.yml)
 on GitHub-hosted runners only (linux x86_64 gnu/musl, linux aarch64, macos
 aarch64 unsigned). Assets land on
-https://github.com/chetan-metrum-ai/all-smi/releases under tags like
+https://github.com/metrum-ai/all-smi/releases under tags like
 `v0.28.1-metrum.1`. Prefer `all-smi-linux-x86_64.tar.gz` on GPU servers.
 
 Do not use the upstream `release.yml` on this fork: it requires self-hosted

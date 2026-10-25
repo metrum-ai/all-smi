@@ -1,6 +1,7 @@
+<!-- Copyright (c) 2026 Metrum AI. All rights reserved. -->
 # Changelog
 
-[Home](README.md) · [Metrum releases](https://github.com/chetan-metrum-ai/all-smi/releases) · [Upstream releases](https://github.com/lablup/all-smi/releases)
+[Home](README.md) · [Metrum releases](https://github.com/metrum-ai/all-smi/releases) · [Upstream releases](https://github.com/lablup/all-smi/releases)
 
 This tree is the Metrum fork of [lablup/all-smi](https://github.com/lablup/all-smi). Fork builds are tagged `vX.Y.Z-metrum.N` and include NVIDIA GPM, NVML extras, and the DCGM plugin. `cargo install all-smi` from crates.io does not. The history below the Metrum section is the upstream changelog this fork tracks.
 
