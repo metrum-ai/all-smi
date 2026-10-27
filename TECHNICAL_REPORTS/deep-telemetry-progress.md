@@ -26,6 +26,19 @@ a null-bearing plugin payload. No real root-null payload fixture is available,
 so issue #32 remains open pending reproduction and verification under the
 reported conditions.
 
+## Issue #31 — ROCm 10 doctor detection (Metrum AI, review follow-up)
+
+The ROCm doctor check searches installed version metadata and headers first,
+then tries `amd-smi version` and labels the `rocminfo` Runtime Version as the
+HSA runtime version. A version-unknown result requires a ROCm installation
+marker; an arbitrary `lib/` directory is insufficient. Versioned roots and
+ROCm core directories are selected deterministically by highest version.
+Tests cover ROCm 6 and ROCm 10 layouts, fallback-output parsing, empty-library
+false positives, and deterministic selection.
+
+On a Strix Halo (Radeon 8060S) test system with ROCm 10.0, the doctor check
+reported version `10.0.0` from installed version metadata.
+
 ## v0.28.1-metrum.1 — release validation in progress (Metrum AI)
 
 Merging upstream release tag v0.28.1 (`03e8fd0`) into fork main
