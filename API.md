@@ -227,8 +227,11 @@ For command-line exports and recording, see [Snapshots, recording, and replay](d
 | `all_smi_gpu_utilization`             | GPU utilization percentage | percent | `gpu_index`, `gpu_name`                   |
 | `all_smi_gpu_memory_used_bytes`       | GPU memory used            | bytes   | `gpu_index`, `gpu_name`                   |
 | `all_smi_gpu_memory_total_bytes`      | GPU memory total           | bytes   | `gpu_index`, `gpu_name`                   |
+| `all_smi_gpu_memory_gtt_used_bytes`    | Shared GTT memory used (AMD APU when available) | bytes | `gpu`, `instance`, `gpu_uuid`, `gpu_index` |
+| `all_smi_gpu_memory_gtt_total_bytes`   | Shared GTT memory capacity (AMD APU when available) | bytes | `gpu`, `instance`, `gpu_uuid`, `gpu_index` |
 | `all_smi_gpu_temperature_celsius`     | GPU temperature            | celsius | `gpu_index`, `gpu_name`                   |
-| `all_smi_gpu_power_consumption_watts` | GPU power consumption      | watts   | `gpu_index`, `gpu_name`                   |
+| `all_smi_gpu_power_consumption_watts` | GPU power consumption (GFX-only on AMD APUs when reported; otherwise socket power) | watts | `gpu_index`, `gpu_name` |
+| `all_smi_gpu_socket_power_watts`       | Whole-APU socket power, distinct from GFX-only power | watts | `gpu`, `instance`, `gpu_uuid`, `gpu_index` |
 | `all_smi_gpu_frequency_mhz`           | GPU frequency              | MHz     | `gpu_index`, `gpu_name`                   |
 | `all_smi_gpu_fan_speed_rpm`           | GPU fan speed              | RPM     | `gpu`, `instance`, `gpu_uuid`, `gpu_index` |
 | `all_smi_gpu_fan_duty_cycle`          | GPU fan duty cycle         | percent | `gpu`, `instance`, `gpu_uuid`, `gpu_index` |

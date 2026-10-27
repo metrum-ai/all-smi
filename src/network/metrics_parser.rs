@@ -606,6 +606,24 @@ impl MetricsParser {
                     format!("{value:.2}"),
                 );
             }
+            "gpu_socket_power_watts" => {
+                gpu_info.detail.insert(
+                    crate::device::readers::detail_keys::SOCKET_POWER_WATTS_DETAIL_KEY.to_string(),
+                    value.to_string(),
+                );
+            }
+            "gpu_memory_gtt_used_bytes" => {
+                gpu_info.detail.insert(
+                    crate::device::readers::detail_keys::GTT_MEMORY_USED_BYTES_DETAIL_KEY.to_string(),
+                    value.to_string(),
+                );
+            }
+            "gpu_memory_gtt_total_bytes" => {
+                gpu_info.detail.insert(
+                    crate::device::readers::detail_keys::GTT_MEMORY_TOTAL_BYTES_DETAIL_KEY.to_string(),
+                    value.to_string(),
+                );
+            }
             "gpu_info" => {
                 // Extract device type
                 if let Some(device_type) = labels.get("type") {
@@ -2250,6 +2268,34 @@ all_smi_gpu_utilization{gpu="Idle node", instance="node-x", gpu_uuid="GPU-ZERO",
         let gpu = &parsed.gpu_info[0];
         assert_eq!(gpu.uuid, "GPU-ZERO");
         assert_eq!(gpu.utilization_reading(), Some(0.0));
+    }
+
+    #[test]
+    fn apu_gtt_and_socket_power_gauges_round_trip_into_detail() {
+        let parser = create_test_parser();
+        let re = create_test_regex();
+        let host = "127.0.0.1:10058";
+        let test_data = r#"
+all_smi_gpu_memory_gtt_used_bytes{gpu="Radeon 8060S", instance="apu", gpu_uuid="GPU-0", gpu_index="0"} 5553598464
+all_smi_gpu_memory_gtt_total_bytes{gpu="Radeon 8060S", instance="apu", gpu_uuid="GPU-0", gpu_index="0"} 121367355392
+all_smi_gpu_socket_power_watts{gpu="Radeon 8060S", instance="apu", gpu_uuid="GPU-0", gpu_index="0"} 68.9
+all_smi_gpu_info{gpu="Radeon 8060S", instance="apu", gpu_uuid="GPU-0", gpu_index="0", type="GPU"} 1
+"#;
+        let parsed = parser.parse_metrics(test_data, host, &re);
+        assert_eq!(parsed.gpu_info.len(), 1);
+        let detail = &parsed.gpu_info[0].detail;
+        assert_eq!(
+            detail.get(crate::device::readers::detail_keys::GTT_MEMORY_USED_BYTES_DETAIL_KEY),
+            Some(&"5553598464".to_string())
+        );
+        assert_eq!(
+            detail.get(crate::device::readers::detail_keys::GTT_MEMORY_TOTAL_BYTES_DETAIL_KEY),
+            Some(&"121367355392".to_string())
+        );
+        assert_eq!(
+            detail.get(crate::device::readers::detail_keys::SOCKET_POWER_WATTS_DETAIL_KEY),
+            Some(&"68.9".to_string())
+        );
     }
 
     /// Issue #418: a non-reporting ATOM Max die has no power series of its
