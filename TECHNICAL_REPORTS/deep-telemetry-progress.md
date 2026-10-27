@@ -15,18 +15,16 @@ group access displayed the CPU and GPU panels and 3/125 GB system memory, with
 no AMD plugin sampling error. The run was bounded to six seconds; load behavior
 was not measured.
 
-## Issue #32 — AMD plugin nullable metrics (Metrum AI, in progress)
+## Issue #32 — AMD plugin nullable metrics (Metrum AI, follow-up required)
 
-The AMD plugin now converts JSON `null` values in required floating-point
-metric fields to `0.0` before crossing the ABI boundary. This prevents a
-non-finite floating-point sample, which `serde_json` represents as `null`, from
-invalidating the full typed sample; optional fields remain null. A unit test
-covers GPU and process metric fields and confirms optional values are retained.
+The blanket null-to-zero normalization has been removed. The AMD reader now
+omits process samples whose CPU or memory percentage is non-finite and emits a
+field-specific warning; typed ABI decode errors include the failing field path.
 
-On a Strix Halo (Radeon 8060S) test system, a root `snapshot` completed
-successfully with the release binary; the reported `local`-TUI sampling failure
-was not reproduced by that command. The root TUI path and load behavior have
-not been measured for this change.
+A root `local` run on a Strix Halo (Radeon 8060S) test system did not reproduce
+a null-bearing plugin payload. No real root-null payload fixture is available,
+so issue #32 remains open pending reproduction and verification under the
+reported conditions.
 
 ## v0.28.1-metrum.1 — release validation in progress (Metrum AI)
 

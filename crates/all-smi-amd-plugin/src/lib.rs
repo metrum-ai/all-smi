@@ -39,44 +39,11 @@ struct PluginMetadata<'a> {
     wire_format: &'a str,
 }
 
-fn normalize_nullable_metrics(value: &mut serde_json::Value) {
-    const REQUIRED_FLOATS: &[&str] = &[
-        "utilization",
-        "ane_utilization",
-        "power_consumption",
-        "cpu_percent",
-        "memory_percent",
-        "gpu_utilization",
-    ];
-
-    match value {
-        serde_json::Value::Object(fields) => {
-            for (key, field) in fields {
-                if field.is_null() && REQUIRED_FLOATS.contains(&key.as_str()) {
-                    *field = serde_json::Value::from(0.0);
-                } else {
-                    normalize_nullable_metrics(field);
-                }
-            }
-        }
-        serde_json::Value::Array(values) => {
-            for value in values {
-                normalize_nullable_metrics(value);
-            }
-        }
-        _ => {}
-    }
-}
-
 fn write_json<T: Serialize>(value: &T, out: *mut AmdPluginBuffer) -> i32 {
     if out.is_null() {
         return STATUS_INVALID_ARGUMENT;
     }
-    let Ok(mut value) = serde_json::to_value(value) else {
-        return STATUS_FAILED;
-    };
-    normalize_nullable_metrics(&mut value);
-    let Ok(mut bytes) = serde_json::to_vec(&value) else {
+    let Ok(mut bytes) = serde_json::to_vec(value) else {
         return STATUS_FAILED;
     };
     let buffer = AmdPluginBuffer {
@@ -184,29 +151,9 @@ pub extern "C" fn all_smi_amd_plugin_entry_v1() -> *const AmdPluginApiV1 {
 
 #[cfg(test)]
 mod tests {
-    use super::{LIBAMDGPU_TOP_VERSION, PluginMetadata, normalize_nullable_metrics};
+    use super::{LIBAMDGPU_TOP_VERSION, PluginMetadata};
 
     const MANIFEST: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"));
-
-    #[test]
-    fn null_non_finite_metric_values_are_normalized_without_touching_optional_fields() {
-        // serde_json encodes NaN/Infinity as null. Keep this fixture free of
-        // host-identifying strings; the null pattern reproduces the wire
-        // contract failure reported by the amd-halo root sampling path.
-        let mut value: serde_json::Value = serde_json::from_str(
-            r#"[{"utilization":null,"ane_utilization":null,"power_consumption":null,"fan_speed_rpm":null,"process":{"cpu_percent":null,"memory_percent":null,"gpu_utilization":null}}]"#,
-        )
-        .expect("fixture JSON");
-        normalize_nullable_metrics(&mut value);
-        let gpu = &value[0];
-        assert_eq!(gpu["utilization"], 0.0);
-        assert_eq!(gpu["ane_utilization"], 0.0);
-        assert_eq!(gpu["power_consumption"], 0.0);
-        assert!(gpu["fan_speed_rpm"].is_null());
-        assert_eq!(gpu["process"]["cpu_percent"], 0.0);
-        assert_eq!(gpu["process"]["memory_percent"], 0.0);
-        assert_eq!(gpu["process"]["gpu_utilization"], 0.0);
-    }
 
     #[test]
     fn metadata_matches_exact_dependency_pin() {

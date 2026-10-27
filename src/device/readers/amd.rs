@@ -293,6 +293,16 @@ fn validate_api_header(abi_version: u32, struct_size: usize) -> Result<(), Strin
     Ok(())
 }
 
+fn decode_plugin_json<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, String> {
+    let mut deserializer = serde_json::Deserializer::from_slice(bytes);
+    let value = serde_path_to_error::deserialize(&mut deserializer)
+        .map_err(|error| format!("invalid plugin JSON at {}: {}", error.path(), error.inner()))?;
+    deserializer
+        .end()
+        .map_err(|error| format!("invalid plugin JSON at <root>: {error}"))?;
+    Ok(value)
+}
+
 fn read_buffer<T: DeserializeOwned>(
     api: &AmdPluginApiV1,
     invoke: impl FnOnce(*mut AmdPluginBuffer) -> i32,
@@ -311,7 +321,7 @@ fn read_buffer<T: DeserializeOwned>(
         // SAFETY: the validated descriptor is owned by the plugin and remains
         // live until `free_buffer` below.
         let bytes = unsafe { std::slice::from_raw_parts(buffer.ptr, buffer.len) };
-        serde_json::from_slice(bytes).map_err(|error| format!("invalid plugin JSON: {error}"))
+        decode_plugin_json(bytes)
     };
     // SAFETY: this descriptor came from the same validated API table and is
     // released exactly once, even when deserialization fails.

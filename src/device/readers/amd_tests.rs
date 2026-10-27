@@ -19,8 +19,28 @@ use std::path::{Path, PathBuf};
 
 use super::{
     AMD_PLUGIN_ABI_VERSION, AMD_PLUGIN_FILENAME, AmdPluginApiV1, AmdPluginBuffer, PluginMetadata,
-    default_candidates, validate_api, validate_candidate, validate_metadata,
+    decode_plugin_json, default_candidates, validate_api, validate_candidate, validate_metadata,
 };
+
+#[test]
+fn plugin_json_decode_error_names_the_exact_field_path() {
+    #[allow(dead_code)]
+    #[derive(Debug, serde::Deserialize)]
+    struct Process {
+        cpu_percent: f64,
+    }
+
+    let error = decode_plugin_json::<Vec<Process>>(br#"[{"cpu_percent":null}]"#)
+        .expect_err("null is not a valid required floating-point reading");
+    assert!(
+        error.contains("[0].cpu_percent"),
+        "missing field path: {error}"
+    );
+    assert!(
+        error.contains("invalid type: null"),
+        "missing cause: {error}"
+    );
+}
 
 unsafe extern "C" fn create() -> *mut c_void {
     std::ptr::null_mut()

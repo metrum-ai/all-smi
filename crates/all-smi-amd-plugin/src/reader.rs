@@ -78,6 +78,18 @@ fn hwmon_power_watts(value: u32) -> f64 {
     f64::from(value).clamp(0.0, MAX_GPU_POWER_WATTS)
 }
 
+fn finite_process_percentages(cpu_percent: f64, memory_percent: f64) -> Option<(f64, f64)> {
+    if !cpu_percent.is_finite() {
+        eprintln!("AMD plugin omitted a process sample with non-finite cpu_percent");
+        return None;
+    }
+    if !memory_percent.is_finite() {
+        eprintln!("AMD plugin omitted a process sample with non-finite memory_percent");
+        return None;
+    }
+    Some((cpu_percent, memory_percent))
+}
+
 /// Write the plugin's three per-poll sensor readings into `detail` in the
 /// shared reader conventions, returning the clamped tachometer value for
 /// `GpuInfo::fan_speed_rpm`.
