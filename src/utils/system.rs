@@ -66,6 +66,32 @@ pub fn refresh_global_processes() {
     system.refresh_memory();
 }
 
+/// Whether local AMD collection has to require root after checking DRI permissions.
+#[cfg(all(target_os = "linux", not(target_env = "musl")))]
+fn should_require_root_for_local(is_amd: bool, is_root: bool, has_dri_access: bool) -> bool {
+    is_amd && !is_root && !has_dri_access
+}
+
+/// Check whether this user can access an AMD render node without escalation.
+#[cfg(all(target_os = "linux", not(target_env = "musl")))]
+fn linux_render_node_access() -> bool {
+    use std::os::unix::ffi::OsStrExt;
+
+    std::fs::read_dir("/dev/dri")
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().as_bytes().starts_with(b"renderD"))
+        .any(|entry| {
+            let Ok(path) = std::ffi::CString::new(entry.path().as_os_str().as_bytes()) else {
+                return false;
+            };
+            // SAFETY: `path` is a valid NUL-terminated CString and access only checks permissions.
+            unsafe { libc::access(path.as_ptr(), libc::R_OK | libc::W_OK) == 0 }
+        })
+}
+
 /// Check if the current process already has sudo privileges
 pub fn has_sudo_privileges() -> bool {
     new_command("sudo")
@@ -117,10 +143,14 @@ pub fn ensure_sudo_permissions() {
             use crate::device::platform_detection::has_amd;
 
             if has_amd() {
-                // AMD GPUs require sudo to access /dev/dri devices
-                // Check if running as root
-                if unsafe { libc::geteuid() } != 0 {
+                let is_root = unsafe { libc::geteuid() } == 0;
+                let has_dri_access = linux_render_node_access();
+                if should_require_root_for_local(true, is_root, has_dri_access) {
                     request_sudo_with_explanation(SudoPlatform::Linux, false);
+                } else if !is_root {
+                    eprintln!(
+                        "Note: running without root; metrics requiring privileged device or process access may be unavailable."
+                    );
                 }
             }
         }
@@ -357,6 +387,15 @@ fn request_sudo_with_explanation(platform: SudoPlatform, return_bool: bool) -> b
 mod tests {
     use super::*;
 
+    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
+    #[test]
+    fn local_amd_requires_root_only_without_render_node_access() {
+        assert!(!should_require_root_for_local(false, false, false));
+        assert!(!should_require_root_for_local(true, true, false));
+        assert!(!should_require_root_for_local(true, false, true));
+        assert!(should_require_root_for_local(true, false, false));
+    }
+
     #[test]
     fn test_calculate_adaptive_interval() {
         assert_eq!(calculate_adaptive_interval(0), 2);
@@ -402,7 +441,7 @@ mod tests {
     #[test]
     fn test_ensure_sudo_permissions_non_macos() {
         #[cfg(target_os = "linux")]
-        if unsafe { libc::geteuid() } != 0 && !sudo_command_available() {
+        if unsafe { libc::geteuid() } != 0 && !linux_render_node_access() {
             return;
         }
         ensure_sudo_permissions();
