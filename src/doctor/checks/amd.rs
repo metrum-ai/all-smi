@@ -485,37 +485,75 @@ fn check_adl_sensors(_ctx: &CheckCtx) -> CheckResult {
 
 #[cfg(target_os = "linux")]
 fn rocm_version_from_root(root: &std::path::Path) -> Option<(String, std::path::PathBuf)> {
-    let mut version_files = vec![
+    let direct_version_files = [
         root.join(".info/version"),
         root.join(".info/version-dev"),
         root.join("lib/rocm-release-info/version"),
     ];
-    if let Ok(entries) = std::fs::read_dir(root) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if entry.file_name().to_string_lossy().starts_with("core") {
-                version_files.push(path.join(".info/version"));
-                let header = path.join("include/rocm-core/rocm_version.h");
-                if let Ok(contents) = std::fs::read_to_string(&header)
-                    && let Some(version) = parse_rocm_version_header(&contents)
-                {
-                    return Some((version, header));
-                }
-            }
+    for path in direct_version_files {
+        if let Some(result) = read_rocm_version_file(&path) {
+            return Some(result);
         }
     }
-    let header = root.join("include/rocm-core/rocm_version.h");
-    if let Ok(contents) = std::fs::read_to_string(&header)
-        && let Some(version) = parse_rocm_version_header(&contents)
-    {
-        return Some((version, header));
+
+    let root_header = root.join("include/rocm-core/rocm_version.h");
+    if let Some(result) = read_rocm_version_header(&root_header) {
+        return Some(result);
     }
-    version_files.into_iter().find_map(|path| {
-        std::fs::read_to_string(&path)
-            .ok()
-            .map(|version| (version.trim().to_string(), path))
-            .filter(|(version, _)| !version.is_empty())
-    })
+
+    let mut cores = std::fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            (entry.file_name().to_string_lossy().starts_with("core") && path.is_dir())
+                .then_some(path)
+        })
+        .collect::<Vec<_>>();
+    sort_versioned_paths(&mut cores);
+    for core in cores {
+        let header = core.join("include/rocm-core/rocm_version.h");
+        if let Some(result) = read_rocm_version_header(&header) {
+            return Some(result);
+        }
+        if let Some(result) = read_rocm_version_file(&core.join(".info/version")) {
+            return Some(result);
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn read_rocm_version_file(path: &std::path::Path) -> Option<(String, std::path::PathBuf)> {
+    let version = std::fs::read_to_string(path).ok()?;
+    let version = version.trim();
+    (!version.is_empty()).then(|| (version.to_string(), path.to_path_buf()))
+}
+
+#[cfg(target_os = "linux")]
+fn read_rocm_version_header(path: &std::path::Path) -> Option<(String, std::path::PathBuf)> {
+    let contents = std::fs::read_to_string(path).ok()?;
+    parse_rocm_version_header(&contents).map(|version| (version, path.to_path_buf()))
+}
+
+#[cfg(target_os = "linux")]
+fn version_sort_key(name: &str) -> Vec<u32> {
+    name.split(|character: char| !character.is_ascii_digit())
+        .filter(|part| !part.is_empty())
+        .filter_map(|part| part.parse().ok())
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
+fn sort_versioned_paths(paths: &mut [std::path::PathBuf]) {
+    paths.sort_by(|left, right| {
+        let left_name = left.file_name().unwrap_or_default().to_string_lossy();
+        let right_name = right.file_name().unwrap_or_default().to_string_lossy();
+        version_sort_key(&right_name)
+            .cmp(&version_sort_key(&left_name))
+            .then_with(|| left.cmp(right))
+    });
 }
 
 #[cfg(target_os = "linux")]
@@ -542,19 +580,64 @@ fn rocm_roots() -> Vec<std::path::PathBuf> {
     if let Some(path) = std::env::var_os("ROCM_PATH") {
         roots.push(path.into());
     }
-    roots.push("/opt/rocm".into());
     if let Ok(entries) = std::fs::read_dir("/opt") {
-        roots.extend(entries.flatten().filter_map(|entry| {
-            entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with("rocm-")
-                .then(|| entry.path())
-        }));
+        let mut versioned = entries
+            .flatten()
+            .filter_map(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("rocm-")
+                    .then(|| entry.path())
+            })
+            .collect::<Vec<_>>();
+        sort_versioned_paths(&mut versioned);
+        roots.extend(versioned);
     }
+    roots.push("/opt/rocm".into());
     let mut seen = std::collections::HashSet::new();
     roots.retain(|root| seen.insert(root.clone()));
     roots
+}
+
+#[cfg(target_os = "linux")]
+fn has_rocm_userspace_marker(root: &std::path::Path) -> bool {
+    if root.join(".info").is_dir() || root.join("bin/rocminfo").is_file() {
+        return true;
+    }
+    std::fs::read_dir(root.join("lib"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("librocm-core.so")
+        })
+}
+
+#[cfg(target_os = "linux")]
+fn is_rocm_root(root: &std::path::Path) -> bool {
+    has_rocm_userspace_marker(root) || std::path::Path::new("/sys/module/amdgpu").exists()
+}
+
+#[cfg(target_os = "linux")]
+fn parse_amd_smi_rocm_version(output: &str) -> Option<String> {
+    output.lines().find_map(|line| {
+        let (label, version) = line.split_once(':')?;
+        (label.to_ascii_lowercase().contains("rocm") && !version.trim().is_empty())
+            .then(|| format!("ROCm {}", version.trim()))
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn parse_rocminfo_hsa_version(output: &str) -> Option<String> {
+    output.lines().find_map(|line| {
+        let (label, version) = line.split_once(':')?;
+        (label.trim() == "Runtime Version" && !version.trim().is_empty())
+            .then(|| format!("HSA runtime version {}", version.trim()))
+    })
 }
 
 fn check_rocm(_ctx: &CheckCtx) -> CheckResult {
@@ -566,34 +649,25 @@ fn check_rocm(_ctx: &CheckCtx) -> CheckResult {
                 return CheckResult::Pass(format!("ROCm {version} ({})", source.display()));
             }
         }
+        if let Some(out) = try_exec("amd-smi", &["version"], Duration::from_millis(2_500))
+            && out.success()
+            && let Some(version) = parse_amd_smi_rocm_version(&out.stdout)
+        {
+            return CheckResult::Pass(version);
+        }
+        if let Some(out) = try_exec("rocminfo", &[], Duration::from_millis(2_500))
+            && out.success()
+            && let Some(version) = parse_rocminfo_hsa_version(&out.stdout)
+        {
+            return CheckResult::Pass(version);
+        }
         for root in roots {
-            if root.exists()
-                && (root.join("bin/rocminfo").exists()
-                    || root.join("include/rocm-core").exists()
-                    || root.join("lib").exists())
-            {
+            if root.exists() && is_rocm_root(&root) {
                 return CheckResult::Pass(format!(
                     "ROCm present, version unknown ({})",
                     root.display()
                 ));
             }
-        }
-        if let Some(out) = try_exec("amd-smi", &["version"], Duration::from_millis(2_500))
-            && out.success()
-            && let Some(line) = out
-                .stdout
-                .lines()
-                .find(|line| line.to_ascii_lowercase().contains("rocm"))
-        {
-            return CheckResult::Pass(line.trim().to_string());
-        }
-        if let Some(out) = try_exec("rocminfo", &[], Duration::from_millis(2_500))
-            && out.success()
-            && let Some(line) = out.stdout.lines().find(|line| {
-                line.contains("Runtime Version") || line.to_ascii_lowercase().contains("rocm")
-            })
-        {
-            return CheckResult::Pass(line.trim().to_string());
         }
         CheckResult::Skip("ROCm not detected (no installation path or runtime tool)".to_string())
     }
@@ -702,7 +776,10 @@ fn check_build_gate(_ctx: &CheckCtx) -> CheckResult {
 mod tests {
     use super::per_card_verdict;
     #[cfg(target_os = "linux")]
-    use super::{parse_rocm_version_header, rocm_version_from_root};
+    use super::{
+        has_rocm_userspace_marker, parse_amd_smi_rocm_version, parse_rocm_version_header,
+        parse_rocminfo_hsa_version, rocm_version_from_root, sort_versioned_paths,
+    };
 
     #[cfg(target_os = "linux")]
     #[test]
@@ -738,6 +815,60 @@ mod tests {
             parse_rocm_version_header("#define ROCM_VERSION_MAJOR 10"),
             None
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn core_root_selection_uses_highest_version_deterministically() {
+        let root = tempfile::tempdir().expect("temporary ROCm root");
+        for (core, major, minor, patch) in [("core-6.3", 6, 3, 2), ("core-10.0", 10, 0, 0)] {
+            let header = root
+                .path()
+                .join(core)
+                .join("include/rocm-core/rocm_version.h");
+            std::fs::create_dir_all(header.parent().unwrap()).unwrap();
+            std::fs::write(
+                header,
+                format!(
+                    "#define ROCM_VERSION_MAJOR {major}\n#define ROCM_VERSION_MINOR {minor}\n#define ROCM_VERSION_PATCH {patch}\n"
+                ),
+            )
+            .unwrap();
+        }
+        assert_eq!(rocm_version_from_root(root.path()).unwrap().0, "10.0.0");
+
+        let mut roots = vec![
+            std::path::PathBuf::from("/opt/rocm-6.3"),
+            std::path::PathBuf::from("/opt/rocm-10.0"),
+        ];
+        sort_versioned_paths(&mut roots);
+        assert!(roots[0].ends_with("rocm-10.0"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn empty_lib_directory_is_not_a_rocm_marker() {
+        let root = tempfile::tempdir().expect("temporary ROCm root");
+        std::fs::create_dir(root.path().join("lib")).unwrap();
+        assert!(!has_rocm_userspace_marker(root.path()));
+
+        std::fs::write(root.path().join("lib/librocm-core.so.1"), "").unwrap();
+        assert!(has_rocm_userspace_marker(root.path()));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn amd_smi_and_rocminfo_versions_are_labeled_correctly() {
+        assert_eq!(
+            parse_amd_smi_rocm_version("ROCm version: 10.0.0\n"),
+            Some("ROCm 10.0.0".to_string())
+        );
+        assert_eq!(parse_amd_smi_rocm_version("No version data"), None);
+        assert_eq!(
+            parse_rocminfo_hsa_version("Runtime Version: 1.16\n"),
+            Some("HSA runtime version 1.16".to_string())
+        );
+        assert_eq!(parse_rocminfo_hsa_version("Name: AMD GPU"), None);
     }
 
     #[cfg(target_os = "linux")]
