@@ -52,6 +52,8 @@ SECTIONS = ("gpus", "cpus", "memory", "chassis", "processes", "storage")
 IDENTIFIER_FIELDS = {"index", "device_id", "pid", "ppid"}
 GPU_UNAVAILABLE_NEGATIVE_FIELDS = {"utilization", "ane_utilization", "power_consumption"}
 GPU_UNAVAILABLE_ZERO_FIELDS = {"temperature", "frequency"}
+MEMORY_OPTIONAL_ZERO_FIELDS = {"buffers_bytes", "cached_bytes"}
+MEMORY_SWAP_FIELDS = {"swap_total_bytes", "swap_used_bytes", "swap_free_bytes"}
 
 
 def is_gpu_placeholder(metric: str, value: int | float) -> bool:
@@ -109,8 +111,14 @@ def iter_rows(stream: Iterable[str]) -> Iterator[dict[str, object]]:
                         continue
                     if section == "gpus" and is_gpu_placeholder(metric, value):
                         continue
+                    if section == "memory" and metric in MEMORY_OPTIONAL_ZERO_FIELDS and value == 0:
+                        continue
+                    if section == "memory" and metric in MEMORY_SWAP_FIELDS:
+                        if device.get("swap_total_bytes", 0) == 0:
+                            continue
                     row = dict(metadata)
                     row.update(
+                        gap=False,
                         hostname=device.get("hostname") or device.get("instance") or metadata["hostname"],
                         section=section,
                         device_id=str(device_id),
@@ -121,7 +129,32 @@ def iter_rows(stream: Iterable[str]) -> Iterator[dict[str, object]]:
                     )
                     yield row
                     emitted = True
-        if metadata["gap"] or not emitted:
+        named_host_gaps = 0
+        errors = frame.get("errors")
+        if isinstance(errors, list):
+            for error in errors:
+                if not isinstance(error, dict):
+                    continue
+                section_name = error.get("section")
+                prefix = "remote host "
+                if not isinstance(section_name, str) or not section_name.startswith(prefix):
+                    continue
+                host_id = section_name[len(prefix) :]
+                row = dict(metadata)
+                row.update(
+                    gap=True,
+                    hostname=host_id,
+                    section="recording",
+                    device_id=host_id,
+                    device_name=host_id,
+                    metric="gap",
+                    value=1.0,
+                    unit="boolean",
+                )
+                yield row
+                named_host_gaps += 1
+
+        if not named_host_gaps and (metadata["gap"] or not emitted):
             row = dict(metadata)
             row.update(
                 section="recording",

@@ -352,6 +352,12 @@ impl RemoteCollectorBuilder {
         Ok(self)
     }
 
+    /// Configured endpoints after direct hosts and hostfile entries have been
+    /// merged. Used by recorder metadata and per-host gap accounting.
+    pub fn hosts(&self) -> &[String] {
+        &self.hosts
+    }
+
     pub fn build(self) -> RemoteCollector {
         let max_connections = self
             .max_connections

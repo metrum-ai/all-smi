@@ -66,7 +66,30 @@ class RecordExportTests(unittest.TestCase):
         rows = list(record_export.iter_rows(stream))
         self.assertEqual([row["metric"] for row in rows], ["used_memory"])
         self.assertEqual(rows[0]["hostname"], "node-a")
-        self.assertIsNone(rows[0]["gap"])
+        self.assertFalse(rows[0]["gap"])
+
+    def test_partial_remote_gap_is_host_scoped_and_memory_placeholders_are_filtered(self) -> None:
+        stream = io.StringIO(
+            '{"hostname":"remote","gap":true,"errors":[{"section":"remote host node-b:9090",'
+            '"kind":"timeout","message":"no response"}],'
+            '"gpus":[{"uuid":"gpu-0","hostname":"node-a","name":"GPU", "utilization":42}],'
+            '"memory":[{"hostname":"node-a","total_bytes":0,"used_bytes":0,'
+            '"swap_total_bytes":0,"swap_used_bytes":0,"swap_free_bytes":0,'
+            '"buffers_bytes":0,"cached_bytes":0}]}'
+        )
+        rows = list(record_export.iter_rows(stream))
+
+        gpu_rows = [row for row in rows if row["section"] == "gpus"]
+        self.assertEqual(len(gpu_rows), 1)
+        self.assertFalse(gpu_rows[0]["gap"])
+        self.assertEqual(gpu_rows[0]["hostname"], "node-a")
+        memory_metrics = {row["metric"] for row in rows if row["section"] == "memory"}
+        self.assertEqual(memory_metrics, {"total_bytes", "used_bytes"})
+        gap_rows = [row for row in rows if row["metric"] == "gap"]
+        self.assertEqual(len(gap_rows), 1)
+        self.assertEqual(gap_rows[0]["hostname"], "node-b:9090")
+        self.assertEqual(gap_rows[0]["device_id"], "node-b:9090")
+        self.assertTrue(gap_rows[0]["gap"])
 
     def test_rotated_segment_header_supplies_its_unit_map(self) -> None:
         stream = io.StringIO(

@@ -147,8 +147,13 @@ For the complete option list, run `all-smi record --help` and `all-smi view --he
 
 `scripts/record_export.py` converts the recording stream to normalized long-form
 CSV with timestamps, sequence/cadence fields, gap status, device identity,
-metric name, value, and unit. Plain NDJSON and gzip files can be passed directly;
-for zstd, decompress to stdin:
+metric name, value, and unit. Valid measurements from responding remote hosts
+have `gap=false`; an unsuccessful endpoint gets its own named `recording/gap`
+row, so a partial scrape does not mark other hosts' measurements as gaps. The
+exporter omits unavailable GPU placeholders and memory fields that the
+Prometheus exporter omits (zero buffers/cache and swap metrics when swap total
+is zero). Plain NDJSON and gzip files can be passed directly; for zstd,
+decompress to stdin:
 
 ```bash
 python3 scripts/record_export.py --input trace.ndjson --format csv --output trace.csv

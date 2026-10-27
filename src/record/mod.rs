@@ -245,6 +245,7 @@ async fn run_remote(opts: RecorderOptions, stop: Arc<AtomicBool>) -> Result<()> 
             .load_hosts_from_file(file)
             .with_context(|| format!("failed to load hostfile {file}"))?;
     }
+    let configured_hosts = builder.hosts().to_vec();
     let collector = builder.build();
 
     let mut writer =
@@ -254,7 +255,7 @@ async fn run_remote(opts: RecorderOptions, stop: Arc<AtomicBool>) -> Result<()> 
     // In remote mode the header `hosts` field carries the scrape targets
     // so the replay side can reconstruct the tab list even when no data
     // frames arrive.
-    write_header(&mut writer, &opts, &opts.hosts)?;
+    write_header(&mut writer, &opts, &configured_hosts)?;
 
     let start = Instant::now();
     let mut frame_seq: u64 = 0;
@@ -269,12 +270,16 @@ async fn run_remote(opts: RecorderOptions, stop: Arc<AtomicBool>) -> Result<()> 
         let config = CollectionConfig {
             interval: opts.interval.as_secs().max(1),
             first_iteration: false,
-            hosts: opts.hosts.clone(),
+            hosts: configured_hosts.clone(),
         };
         match collector.collect(&config).await {
             Ok(data) => {
                 let mut snap = snapshot_from_collection_data(&data, &opts);
-                let host_gap = append_remote_host_errors(&mut snap, &data.connection_statuses);
+                let host_gap = append_remote_host_errors(
+                    &mut snap,
+                    &data.connection_statuses,
+                    &configured_hosts,
+                );
                 snap.timestamp = tick.timestamp.clone();
                 write_data_frame(
                     &mut writer,
@@ -288,7 +293,7 @@ async fn run_remote(opts: RecorderOptions, stop: Arc<AtomicBool>) -> Result<()> 
             }
             Err(e) => {
                 tracing::warn!(error = %e, "record: remote scrape failed");
-                let snap = remote_gap_snapshot(&tick.timestamp);
+                let snap = remote_gap_snapshot(&tick.timestamp, &configured_hosts, &e.to_string());
                 write_data_frame(
                     &mut writer,
                     &snap,
@@ -416,7 +421,7 @@ fn recording_units() -> Value {
         ("missed_intervals", "count"),
         ("gap", "boolean"),
         ("gpus.utilization", "percent"),
-        ("gpus.ane_utilization", "percent"),
+        ("gpus.ane_utilization", "mW"),
         ("gpus.dla_utilization", "percent"),
         ("gpus.tensorcore_utilization", "percent"),
         ("gpus.temperature", "celsius"),
@@ -553,26 +558,68 @@ fn write_data_frame(
 fn append_remote_host_errors(
     snapshot: &mut Snapshot,
     statuses: &[crate::app_state::ConnectionStatus],
+    configured_hosts: &[String],
 ) -> bool {
-    let mut has_gap = false;
+    use std::collections::HashSet;
+
+    let mut failed_hosts = HashSet::new();
     for status in statuses.iter().filter(|status| !status.is_connected) {
-        has_gap = true;
-        snapshot.errors.push(SnapshotError {
-            section: format!("remote host {}", status.host_id),
-            kind: status
-                .connection_state
-                .clone()
-                .unwrap_or_else(|| "unreachable".to_string()),
-            message: status
-                .last_error
-                .clone()
-                .unwrap_or_else(|| "host did not return data".to_string()),
-        });
+        if failed_hosts.insert(status.host_id.clone()) {
+            snapshot.errors.push(SnapshotError {
+                section: format!("remote host {}", status.host_id),
+                kind: status
+                    .connection_state
+                    .clone()
+                    .unwrap_or_else(|| "unreachable".to_string()),
+                message: status
+                    .last_error
+                    .clone()
+                    .unwrap_or_else(|| "host did not return data".to_string()),
+            });
+        }
     }
-    has_gap
+
+    // Some collection failure paths (timeouts, empty responses, or panics)
+    // can omit a ConnectionStatus entirely. Treat every configured target
+    // without a status as a failed host rather than silently recording a
+    // complete sample.
+    for host in configured_hosts {
+        let host_id = crate::common::http_hosts::http_host_identifier(host);
+        if !statuses.iter().any(|status| status.host_id == host_id)
+            && failed_hosts.insert(host_id.clone())
+        {
+            snapshot.errors.push(SnapshotError {
+                section: format!("remote host {host_id}"),
+                kind: "timeout".to_string(),
+                message: "host returned no connection status (timeout, empty response, or panic)"
+                    .to_string(),
+            });
+        }
+    }
+    !failed_hosts.is_empty()
 }
 
-fn remote_gap_snapshot(timestamp: &str) -> Snapshot {
+fn remote_gap_snapshot(timestamp: &str, hosts: &[String], message: &str) -> Snapshot {
+    let errors = if hosts.is_empty() {
+        vec![SnapshotError {
+            section: "remote".to_string(),
+            kind: "error".to_string(),
+            message: message.to_string(),
+        }]
+    } else {
+        let mut seen_hosts = std::collections::HashSet::new();
+        hosts
+            .iter()
+            .filter_map(|host| {
+                let host_id = crate::common::http_hosts::http_host_identifier(host);
+                seen_hosts.insert(host_id.clone()).then(|| SnapshotError {
+                    section: format!("remote host {host_id}"),
+                    kind: "error".to_string(),
+                    message: message.to_string(),
+                })
+            })
+            .collect()
+    };
     Snapshot {
         schema: SNAPSHOT_SCHEMA_VERSION,
         timestamp: timestamp.to_string(),
@@ -583,11 +630,7 @@ fn remote_gap_snapshot(timestamp: &str) -> Snapshot {
         chassis: None,
         processes: None,
         storage: None,
-        errors: vec![SnapshotError {
-            section: "remote".to_string(),
-            kind: "error".to_string(),
-            message: "remote collection failed; sample unavailable".to_string(),
-        }],
+        errors,
     }
 }
 
@@ -785,10 +828,44 @@ mod tests {
         status.mark_failure("connection refused".to_string());
         let mut snapshot = Snapshot::new("remote".to_string());
 
-        assert!(append_remote_host_errors(&mut snapshot, &[status]));
+        assert!(append_remote_host_errors(
+            &mut snapshot,
+            &[status],
+            &["node-b:9090".to_string()],
+        ));
         assert_eq!(snapshot.errors.len(), 1);
         assert_eq!(snapshot.errors[0].section, "remote host node-b:9090");
         assert_eq!(snapshot.errors[0].message, "connection refused");
+    }
+
+    #[test]
+    fn configured_remote_host_without_status_is_recorded_as_failed() {
+        let mut snapshot = Snapshot::new("remote".to_string());
+        assert!(append_remote_host_errors(
+            &mut snapshot,
+            &[],
+            &["https://node-c:9443".to_string()],
+        ));
+        assert_eq!(snapshot.errors.len(), 1);
+        assert_eq!(snapshot.errors[0].section, "remote host node-c:9443");
+        assert_eq!(snapshot.errors[0].kind, "timeout");
+        assert!(snapshot.errors[0].message.contains("empty response"));
+    }
+
+    #[test]
+    fn connected_configured_remote_host_does_not_create_a_gap() {
+        let mut status = crate::app_state::ConnectionStatus::new(
+            "node-d:9090".to_string(),
+            "http://node-d:9090".to_string(),
+        );
+        status.mark_success();
+        let mut snapshot = Snapshot::new("remote".to_string());
+        assert!(!append_remote_host_errors(
+            &mut snapshot,
+            &[status],
+            &["node-d:9090".to_string()],
+        ));
+        assert!(snapshot.errors.is_empty());
     }
 
     #[test]
@@ -804,7 +881,7 @@ mod tests {
         let mut snapshot = Snapshot::new("test-host".to_string());
         snapshot.timestamp = "2026-10-27T12:00:00.123Z".to_string();
         write_data_frame(&mut writer, &snapshot, 7, 250, 3, 0, false).unwrap();
-        let gap = remote_gap_snapshot("2026-10-27T12:00:00.373Z");
+        let gap = remote_gap_snapshot("2026-10-27T12:00:00.373Z", &[], "collection failed");
         write_data_frame(&mut writer, &gap, 8, 250, 650, 2, true).unwrap();
         writer.finish().unwrap();
 
@@ -814,6 +891,7 @@ mod tests {
         assert_eq!(header["recording_schema"], 2);
         assert_eq!(header["interval_ms"], 250);
         assert_eq!(header["units"]["gpus.used_memory"], "bytes");
+        assert_eq!(header["units"]["gpus.ane_utilization"], "mW");
 
         let frame: Value = serde_json::from_str(lines.next().unwrap()).unwrap();
         assert_eq!(frame["seq"], 7);
