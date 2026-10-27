@@ -256,11 +256,11 @@ pub async fn run_api_mode(args: &ApiArgs, settings: &Settings) {
         .as_ref()
         .map(|address| address.to_socket_addr(configured_port))
         .unwrap_or_else(|| SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), configured_port));
-    let port = bind_addr.port();
 
     // Determine which listeners to start
     #[cfg(unix)]
     {
+        let port = bind_addr.port();
         let socket_path = args.socket.as_ref().map(|s| {
             if s.is_empty() {
                 get_default_socket_path()
@@ -282,7 +282,11 @@ pub async fn run_api_mode(args: &ApiArgs, settings: &Settings) {
             (1..=u16::MAX, None) => {
                 run_tcp_listener(app, bind_addr).await;
             }
-            // No listeners - error (port == 0, no socket)
+            // An explicit bind address with port 0 requests an ephemeral TCP port.
+            (0, None) if args.bind.is_some() => {
+                run_tcp_listener(app, bind_addr).await;
+            }
+            // No listeners - error (port == 0, no socket, no explicit bind)
             (0, None) => {
                 tracing::error!(
                     "No listeners configured. Use --port or --socket to specify a listener."
