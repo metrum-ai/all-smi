@@ -2,6 +2,19 @@
 
 # Deep-telemetry progress
 
+## Issue #33 — permission-aware local TUI startup (Metrum AI)
+
+On Linux AMD systems, `local` checks whether the current user can read and
+write a `/dev/dri/renderD*` node before requiring root. When access is present,
+the TUI starts unprivileged and notes that metrics requiring privileged device
+or process access may be unavailable; without render-node access, the existing
+root-required path remains. Unit tests cover the permission decision.
+
+On Strix Halo with Radeon 8060S, an idle TUI run as a non-root user with render
+group access displayed the CPU and GPU panels and 3/125 GB system memory, with
+no AMD plugin sampling error. The run was bounded to six seconds; load behavior
+was not measured.
+
 ## v0.28.1-metrum.1 — release validation in progress (Metrum AI)
 
 Merging upstream release tag v0.28.1 (`03e8fd0`) into fork main
