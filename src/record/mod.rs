@@ -31,16 +31,16 @@ pub mod writer;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, bail};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::cli::{RecordArgs, RecordCompression, RecordSource, SnapshotIncludes};
 use crate::common::config_file::RecordSettings;
 use crate::snapshot::serializers::write_frame_json;
 use crate::snapshot::{
-    DefaultSnapshotCollector, SNAPSHOT_SCHEMA_VERSION, Snapshot, SnapshotCollector,
+    DefaultSnapshotCollector, SNAPSHOT_SCHEMA_VERSION, Snapshot, SnapshotCollector, SnapshotError,
     SnapshotOptions, collect_once,
 };
 
@@ -51,6 +51,9 @@ use writer::{Codec, RotatingWriter};
 /// tools that parse the NDJSON stream) rely on this spacing when they
 /// walk index frames.
 const INDEX_EVERY_N_FRAMES: u64 = 1000;
+
+/// Version for recorder header/frame metadata; snapshot payloads remain schema 1.
+const RECORDING_SCHEMA_VERSION: u32 = 2;
 
 /// Default basename used for the recorder's NDJSON stream when the
 /// operator does not pass `-o`. Defined once here so the CLI layer,
@@ -117,6 +120,7 @@ impl RecorderOptions {
         }
 
         let duration = parse_duration(&args.duration).context("invalid --duration")?;
+        let interval = parse_interval(&args.interval).context("invalid --interval")?;
         let max_size = parse_byte_size(&args.max_size).context("invalid --max-size")?;
         if args.max_files == 0 {
             bail!("--max-files must be >= 1");
@@ -184,7 +188,7 @@ impl RecorderOptions {
 
         Ok(Self {
             output,
-            interval: Duration::from_secs(args.interval.max(1)),
+            interval,
             duration,
             source: args.source,
             hosts,
@@ -252,30 +256,52 @@ async fn run_remote(opts: RecorderOptions, stop: Arc<AtomicBool>) -> Result<()> 
     // frames arrive.
     write_header(&mut writer, &opts, &opts.hosts)?;
 
-    let start = std::time::Instant::now();
-    let mut seq: u64 = 0;
+    let start = Instant::now();
+    let mut frame_seq: u64 = 0;
+    let mut tick_index: u64 = 0;
     while !stop.load(Ordering::Relaxed) {
         if let Some(limit) = opts.duration
             && start.elapsed() >= limit
         {
             break;
         }
+        let tick = tick_timing(start, opts.interval, tick_index);
         let config = CollectionConfig {
-            interval: opts.interval.as_secs(),
+            interval: opts.interval.as_secs().max(1),
             first_iteration: false,
             hosts: opts.hosts.clone(),
         };
         match collector.collect(&config).await {
             Ok(data) => {
-                let snap = snapshot_from_collection_data(&data, &opts);
-                write_data_frame(&mut writer, &snap, seq)?;
-                seq += 1;
+                let mut snap = snapshot_from_collection_data(&data, &opts);
+                snap.timestamp = tick.timestamp.clone();
+                write_data_frame(
+                    &mut writer,
+                    &snap,
+                    frame_seq,
+                    opts.interval.as_millis() as u64,
+                    tick.lag_ms,
+                    tick.missed_intervals,
+                    tick.missed_intervals > 0,
+                )?;
             }
             Err(e) => {
                 tracing::warn!(error = %e, "record: remote scrape failed");
+                let snap = remote_gap_snapshot(&tick.timestamp);
+                write_data_frame(
+                    &mut writer,
+                    &snap,
+                    frame_seq,
+                    opts.interval.as_millis() as u64,
+                    tick.lag_ms,
+                    tick.missed_intervals,
+                    true,
+                )?;
             }
         }
-        sleep_until_next(&opts, start, seq, &stop).await;
+        frame_seq = frame_seq.saturating_add(1);
+        tick_index = tick_index.saturating_add(tick.missed_intervals.saturating_add(1));
+        sleep_until_next(&opts, start, tick_index, &stop).await;
     }
     writer.finish().context("failed to finalize recording")?;
     Ok(())
@@ -291,8 +317,9 @@ where
     F: FnMut(&SnapshotIncludes, Duration) -> Fut,
     Fut: std::future::Future<Output = Snapshot>,
 {
-    let start = std::time::Instant::now();
-    let mut seq: u64 = 0;
+    let start = Instant::now();
+    let mut frame_seq: u64 = 0;
+    let mut tick_index: u64 = 0;
     // The snapshot collector runs every reader under a 5s timeout by
     // default; mirror that ceiling so a hung NVML call cannot block the
     // recorder indefinitely. Operators can extend the interval past 5s
@@ -305,23 +332,63 @@ where
         {
             break;
         }
-        let snap = collect(&opts.includes, reader_timeout).await;
-        write_data_frame(writer, &snap, seq)?;
-        seq += 1;
-        sleep_until_next(opts, start, seq, &stop).await;
+        let tick = tick_timing(start, opts.interval, tick_index);
+        let mut snap = collect(&opts.includes, reader_timeout).await;
+        snap.timestamp = tick.timestamp;
+        write_data_frame(
+            writer,
+            &snap,
+            frame_seq,
+            opts.interval.as_millis() as u64,
+            tick.lag_ms,
+            tick.missed_intervals,
+            tick.missed_intervals > 0,
+        )?;
+        frame_seq = frame_seq.saturating_add(1);
+        tick_index = tick_index.saturating_add(tick.missed_intervals.saturating_add(1));
+        sleep_until_next(opts, start, tick_index, &stop).await;
     }
     Ok(())
 }
 
-/// Sleep until the next tick boundary (fixed-interval recording) or
-/// break early if SIGTERM landed.
+#[derive(Debug)]
+struct TickTiming {
+    timestamp: String,
+    lag_ms: u64,
+    missed_intervals: u64,
+}
+
+fn tick_timing(start: Instant, interval: Duration, tick_index: u64) -> TickTiming {
+    tick_timing_at(start, Instant::now(), interval, tick_index)
+}
+
+fn tick_timing_at(
+    start: Instant,
+    actual: Instant,
+    interval: Duration,
+    tick_index: u64,
+) -> TickTiming {
+    let target = start + interval.saturating_mul(tick_index.min(u64::from(u32::MAX)) as u32);
+    let lag = actual.saturating_duration_since(target);
+    let interval_nanos = interval.as_nanos().max(1);
+    TickTiming {
+        timestamp: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        lag_ms: lag.as_millis().min(u128::from(u64::MAX)) as u64,
+        missed_intervals: (lag.as_nanos() / interval_nanos).min(u128::from(u64::MAX)) as u64,
+    }
+}
+
+/// Sleep until the next fixed-rate tick boundary or break early on SIGTERM.
 async fn sleep_until_next(
     opts: &RecorderOptions,
-    start: std::time::Instant,
-    seq: u64,
+    start: Instant,
+    tick_index: u64,
     stop: &Arc<AtomicBool>,
 ) {
-    let target = start + opts.interval.saturating_mul(seq as u32);
+    let target = start
+        + opts
+            .interval
+            .saturating_mul(tick_index.min(u64::from(u32::MAX)) as u32);
     let now = std::time::Instant::now();
     if target > now {
         let remaining = target.duration_since(now);
@@ -338,6 +405,83 @@ async fn sleep_until_next(
     }
 }
 
+fn recording_units() -> Value {
+    let entries = [
+        ("timestamp", "RFC3339 UTC"),
+        ("recording_schema", "version"),
+        ("seq", "count"),
+        ("interval_ms", "ms"),
+        ("lag_ms", "ms"),
+        ("missed_intervals", "count"),
+        ("gap", "boolean"),
+        ("gpus.utilization", "percent"),
+        ("gpus.ane_utilization", "percent"),
+        ("gpus.dla_utilization", "percent"),
+        ("gpus.tensorcore_utilization", "percent"),
+        ("gpus.temperature", "celsius"),
+        ("gpus.used_memory", "bytes"),
+        ("gpus.total_memory", "bytes"),
+        ("gpus.frequency", "MHz"),
+        ("gpus.power_consumption", "watts"),
+        ("gpus.gpu_core_count", "count"),
+        ("gpus.fan_speed_rpm", "rpm"),
+        ("gpus.performance_state", "index"),
+        ("gpus.numa_node_id", "index"),
+        ("gpus.temperature_threshold_slowdown", "celsius"),
+        ("gpus.temperature_threshold_shutdown", "celsius"),
+        ("gpus.temperature_threshold_max_operating", "celsius"),
+        ("gpus.temperature_threshold_acoustic", "celsius"),
+        ("gpus.energy_hw_millijoules", "millijoules"),
+        ("gpus.remapped_rows", "count"),
+        ("cpus.utilization", "percent"),
+        ("cpus.temperature", "celsius"),
+        ("cpus.power_consumption", "watts"),
+        ("cpus.base_frequency_mhz", "MHz"),
+        ("cpus.max_frequency_mhz", "MHz"),
+        ("cpus.cache_size_mb", "MB"),
+        ("cpus.socket_count", "count"),
+        ("cpus.total_cores", "count"),
+        ("cpus.total_threads", "count"),
+        ("memory.total_bytes", "bytes"),
+        ("memory.used_bytes", "bytes"),
+        ("memory.available_bytes", "bytes"),
+        ("memory.free_bytes", "bytes"),
+        ("memory.buffers_bytes", "bytes"),
+        ("memory.cached_bytes", "bytes"),
+        ("memory.swap_total_bytes", "bytes"),
+        ("memory.swap_used_bytes", "bytes"),
+        ("memory.swap_free_bytes", "bytes"),
+        ("memory.utilization", "percent"),
+        ("processes.cpu_percent", "percent"),
+        ("processes.memory_percent", "percent"),
+        ("processes.memory_rss", "bytes"),
+        ("processes.memory_vms", "bytes"),
+        ("processes.cpu_time", "seconds"),
+        ("processes.used_memory", "bytes"),
+        ("processes.gpu_utilization", "percent"),
+        ("processes.gpu_mem_util", "percent"),
+        ("processes.enc_util", "percent"),
+        ("processes.dec_util", "percent"),
+        ("processes.threads", "count"),
+        ("processes.priority", "priority-level"),
+        ("processes.nice_value", "priority-level"),
+        ("chassis.total_power_watts", "watts"),
+        ("chassis.inlet_temperature", "celsius"),
+        ("chassis.outlet_temperature", "celsius"),
+        ("chassis.fan_speeds[].speed_rpm", "rpm"),
+        ("chassis.fan_speeds[].max_rpm", "rpm"),
+        ("chassis.psu_status[].power_watts", "watts"),
+        ("storage.total_bytes", "bytes"),
+        ("storage.available_bytes", "bytes"),
+    ];
+    Value::Object(
+        entries
+            .into_iter()
+            .map(|(key, unit)| (key.to_string(), Value::String(unit.to_string())))
+            .collect(),
+    )
+}
+
 fn write_header(
     writer: &mut RotatingWriter,
     opts: &RecorderOptions,
@@ -345,8 +489,11 @@ fn write_header(
 ) -> Result<()> {
     let header = json!({
         "schema": SNAPSHOT_SCHEMA_VERSION,
+        "recording_schema": RECORDING_SCHEMA_VERSION,
         "header": true,
         "interval_ms": opts.interval.as_millis() as u64,
+        "timestamp_precision": "milliseconds",
+        "units": recording_units(),
         "hosts": hosts,
         "all_smi_version": env!("CARGO_PKG_VERSION"),
     });
@@ -356,14 +503,36 @@ fn write_header(
     Ok(())
 }
 
-fn write_data_frame(writer: &mut RotatingWriter, snapshot: &Snapshot, seq: u64) -> Result<()> {
-    // Re-use the shared frame writer through an intermediate buffer. A
-    // direct `write_frame_json(writer, snapshot)` would bypass the
-    // rotation byte counter, so we buffer the line first and push it
-    // through `write_line` which tracks size.
-    let mut buf: Vec<u8> = Vec::with_capacity(4096);
-    write_frame_json(&mut buf, snapshot).context("failed to serialize data frame")?;
-    writer.write_line(&buf)?;
+fn write_data_frame(
+    writer: &mut RotatingWriter,
+    snapshot: &Snapshot,
+    seq: u64,
+    interval_ms: u64,
+    lag_ms: u64,
+    missed_intervals: u64,
+    gap: bool,
+) -> Result<()> {
+    // Re-use the shared serializer for float sanitization, then attach recorder
+    // metadata without changing the snapshot payload schema.
+    let mut encoded = Vec::with_capacity(4096);
+    write_frame_json(&mut encoded, snapshot).context("failed to serialize data frame")?;
+    let mut frame: Value =
+        serde_json::from_slice(&encoded).context("failed to parse serialized snapshot frame")?;
+    let object = frame
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("serialized snapshot frame is not a JSON object"))?;
+    object.insert(
+        "recording_schema".to_string(),
+        RECORDING_SCHEMA_VERSION.into(),
+    );
+    object.insert("seq".to_string(), seq.into());
+    object.insert("interval_ms".to_string(), interval_ms.into());
+    object.insert("lag_ms".to_string(), lag_ms.into());
+    object.insert("missed_intervals".to_string(), missed_intervals.into());
+    object.insert("gap".to_string(), gap.into());
+    let mut line = serde_json::to_vec(&frame).context("failed to serialize recorder metadata")?;
+    line.push(b'\n');
+    writer.write_line(&line)?;
 
     if seq > 0 && seq.is_multiple_of(INDEX_EVERY_N_FRAMES) {
         let idx = json!({
@@ -377,6 +546,25 @@ fn write_data_frame(writer: &mut RotatingWriter, snapshot: &Snapshot, seq: u64) 
         writer.write_line(line.as_bytes())?;
     }
     Ok(())
+}
+
+fn remote_gap_snapshot(timestamp: &str) -> Snapshot {
+    Snapshot {
+        schema: SNAPSHOT_SCHEMA_VERSION,
+        timestamp: timestamp.to_string(),
+        hostname: "remote".to_string(),
+        gpus: None,
+        cpus: None,
+        memory: None,
+        chassis: None,
+        processes: None,
+        storage: None,
+        errors: vec![SnapshotError {
+            section: "remote".to_string(),
+            kind: "error".to_string(),
+            message: "remote collection failed; sample unavailable".to_string(),
+        }],
+    }
 }
 
 /// Build a `Snapshot` from the remote collector's aggregated view. Only
@@ -440,6 +628,29 @@ fn install_signal_handlers(stop: Arc<AtomicBool>) {
             }
         });
     }
+}
+
+/// Parse the fixed interval accepted by `record --interval`. Bare integers
+/// are seconds; `ms` and `s` suffixes make sub-second sampling explicit.
+fn parse_interval(s: &str) -> Result<Duration> {
+    let trimmed = s.trim();
+    let (number, multiplier) = if let Some(value) = trimmed.strip_suffix("ms") {
+        (value, 1_u64)
+    } else if let Some(value) = trimmed.strip_suffix('s') {
+        (value, 1_000_u64)
+    } else {
+        (trimmed, 1_000_u64)
+    };
+    let value = number
+        .parse::<u64>()
+        .map_err(|_| anyhow!("expected a positive duration, got `{trimmed}`"))?;
+    let millis = value
+        .checked_mul(multiplier)
+        .ok_or_else(|| anyhow!("interval `{trimmed}` is too large"))?;
+    if millis == 0 {
+        bail!("interval must be greater than 0ms");
+    }
+    Ok(Duration::from_millis(millis))
 }
 
 /// Parse a human-readable duration string (`"0"`, `"30s"`, `"5m"`,
@@ -526,6 +737,73 @@ mod tests {
     use super::*;
 
     #[test]
+    fn fixed_tick_metadata_reports_lateness_and_missed_boundaries() {
+        let start = Instant::now();
+        let actual = start + Duration::from_millis(1_650);
+        let tick = tick_timing_at(start, actual, Duration::from_millis(250), 4);
+
+        assert_eq!(tick.lag_ms, 650);
+        assert_eq!(tick.missed_intervals, 2);
+        assert!(tick.timestamp.contains('.'));
+        assert!(tick.timestamp.ends_with('Z'));
+    }
+
+    #[test]
+    fn recording_header_and_frames_declare_units_and_gap_metadata() {
+        let directory = tempfile::tempdir().unwrap();
+        let output = directory.path().join("recording.ndjson");
+        let mut args = record_args(Some(output.clone()));
+        args.interval = "250ms".to_string();
+        let opts = RecorderOptions::from_args(&args).unwrap();
+        let mut writer = RotatingWriter::new(&output, Codec::Plain, 0, 1).unwrap();
+        write_header(&mut writer, &opts, &[]).unwrap();
+
+        let mut snapshot = Snapshot::new("test-host".to_string());
+        snapshot.timestamp = "2026-10-27T12:00:00.123Z".to_string();
+        write_data_frame(&mut writer, &snapshot, 7, 250, 3, 0, false).unwrap();
+        let gap = remote_gap_snapshot("2026-10-27T12:00:00.373Z");
+        write_data_frame(&mut writer, &gap, 8, 250, 650, 2, true).unwrap();
+        writer.finish().unwrap();
+
+        let contents = std::fs::read_to_string(output).unwrap();
+        let mut lines = contents.lines();
+        let header: Value = serde_json::from_str(lines.next().unwrap()).unwrap();
+        assert_eq!(header["recording_schema"], 2);
+        assert_eq!(header["interval_ms"], 250);
+        assert_eq!(header["units"]["gpus.used_memory"], "bytes");
+
+        let frame: Value = serde_json::from_str(lines.next().unwrap()).unwrap();
+        assert_eq!(frame["seq"], 7);
+        assert_eq!(frame["interval_ms"], 250);
+        assert_eq!(frame["lag_ms"], 3);
+        assert_eq!(frame["missed_intervals"], 0);
+        assert_eq!(frame["gap"], false);
+        let replayed: Snapshot = serde_json::from_value(frame).unwrap();
+        assert_eq!(replayed.timestamp, "2026-10-27T12:00:00.123Z");
+
+        let gap_frame: Value = serde_json::from_str(lines.next().unwrap()).unwrap();
+        assert_eq!(gap_frame["seq"], 8);
+        assert_eq!(gap_frame["gap"], true);
+        assert_eq!(gap_frame["missed_intervals"], 2);
+        assert_eq!(gap_frame["errors"][0]["section"], "remote");
+        assert!(lines.next().is_none());
+    }
+
+    #[test]
+    fn parse_interval_accepts_subsecond_and_second_forms() {
+        assert_eq!(parse_interval("250ms").unwrap(), Duration::from_millis(250));
+        assert_eq!(parse_interval("1s").unwrap(), Duration::from_secs(1));
+        assert_eq!(parse_interval("3").unwrap(), Duration::from_secs(3));
+    }
+
+    #[test]
+    fn parse_interval_rejects_zero_and_invalid_values() {
+        assert!(parse_interval("0ms").is_err());
+        assert!(parse_interval("0").is_err());
+        assert!(parse_interval("1us").is_err());
+    }
+
+    #[test]
     fn parse_duration_accepts_suffixes() {
         assert_eq!(parse_duration("0").unwrap(), None);
         assert_eq!(parse_duration("30").unwrap(), Some(Duration::from_secs(30)));
@@ -571,7 +849,7 @@ mod tests {
     fn record_args(output: Option<PathBuf>) -> RecordArgs {
         RecordArgs {
             output,
-            interval: 3,
+            interval: "3s".to_string(),
             duration: "0".to_string(),
             source: RecordSource::Local,
             hosts: None,

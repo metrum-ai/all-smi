@@ -81,13 +81,24 @@ The `record` subcommand captures a live metric stream to disk as NDJSON, and
 Prometheus retention store — operators can rewind to the moment throughput
 cratered and see the captured GPU/CPU/memory/chassis state at that tick.
 
-Each captured frame uses the same JSON shape as `snapshot --format json`
-(same serializer), plus an optional header frame and sparse index frames
-every 1000 data frames to enable fast seeking.
+Each captured data frame retains the JSON snapshot shape and adds recorder
+metadata, plus a header frame and sparse index frames every 1000 data frames
+to enable fast seeking. The header declares `recording_schema: 2`; the nested
+snapshot payload remains schema 1 so existing replay and snapshot readers can
+ignore the additional top-level fields. Frame timestamps use RFC3339 UTC with
+millisecond precision. `seq`, `interval_ms`, `lag_ms`, `missed_intervals`, and
+`gap` make the schedule observable; `gap: true` marks an unavailable remote
+scrape or one or more missed schedule boundaries, while `lag_ms` reports
+sub-interval lateness. The header's `units` object declares units for the
+standard numeric fields; unknown or vendor-specific fields remain as emitted
+by their source.
 
 ```bash
 # Capture 30 seconds of local hardware state to a zstd-compressed file.
 all-smi record --output incident.ndjson.zst --duration 30s --interval 1
+
+# Sample at 250 ms for short transients.
+all-smi record --output transient.ndjson.zst --duration 10s --interval 250ms
 
 # Record until SIGTERM; rotate at 100MB per segment, keep last 10 files.
 all-smi record --output trace.ndjson.zst --max-size 100M --max-files 10
@@ -124,6 +135,30 @@ Filter-edit mode (`/`) still takes precedence over replay keys, so the
 operator can filter the visible GPUs mid-playback.
 
 For the complete option list, run `all-smi record --help` and `all-smi view --help`. Compression follows `--compress`, then `record.compress` (default `zstd`), not just the output suffix. Match the suffix to the selected codec because replay detects compression from the filename. Rotation limits count uncompressed bytes.
+
+### Exporting a recorded time series
+
+`scripts/record_export.py` converts the recording stream to normalized long-form
+CSV with timestamps, sequence/cadence fields, gap status, device identity,
+metric name, value, and unit. Plain NDJSON and gzip files can be passed directly;
+for zstd, decompress to stdin:
+
+```bash
+python3 scripts/record_export.py --input trace.ndjson --format csv --output trace.csv
+python3 scripts/record_export.py --input trace.ndjson.gz --format csv --output trace.csv
+zstd -dc trace.ndjson.zst | python3 scripts/record_export.py --format csv --output trace.csv
+```
+
+The same converter writes Parquet when the optional Python `pyarrow` package is
+installed. It streams batches instead of loading the complete trace into memory:
+
+```bash
+zstd -dc trace.ndjson.zst | python3 scripts/record_export.py \
+  --format parquet --output trace.parquet
+```
+
+CSV uses only the Python standard library. Parquet is optional and does not add
+a runtime dependency to all-smi.
 
 The default output is `<cache>/all-smi/records/all-smi-record.ndjson.zst`; override it with `record.output_dir` or `--output`. See [cache paths](configuration.md#cache-paths). Local recording and snapshots use the snapshot collection path; available fields can differ from live local mode. Replay cannot reconstruct fields that were not captured.
 

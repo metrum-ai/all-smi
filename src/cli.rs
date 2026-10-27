@@ -528,9 +528,10 @@ pub struct RecordArgs {
     )]
     pub output: Option<PathBuf>,
 
-    /// Interval in seconds between frames.
-    #[arg(long, short = 'i', default_value_t = 3)]
-    pub interval: u64,
+    /// Interval between frames. Accepts a bare integer in seconds or a
+    /// duration such as `250ms`, `1s`, or `5s`.
+    #[arg(long, short = 'i', default_value = "3s")]
+    pub interval: String,
 
     /// How long to record. `0` (or negative via env overrides) means
     /// record until `SIGTERM`/`SIGINT`. Accepts a bare integer (seconds)
