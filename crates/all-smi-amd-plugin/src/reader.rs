@@ -111,7 +111,7 @@ struct DpmClockInfo {
     current_mhz: Option<u32>,
 }
 
-fn parse_pp_dpm_clock_levels(contents: &str) -> Option<DpmClockInfo> {
+fn parse_pp_dpm_clock_levels(contents: &str, sclk: bool) -> Option<DpmClockInfo> {
     let mut levels = Vec::new();
     for line in contents.lines() {
         let Some((index, rest)) = line.split_once(':') else {
@@ -143,10 +143,22 @@ fn parse_pp_dpm_clock_levels(contents: &str) -> Option<DpmClockInfo> {
             .any(|word| matches!(word.to_ascii_lowercase().as_str(), "min" | "max"));
         levels.push((index, mhz, current, range_marker));
     }
-    let min_mhz = levels.iter().map(|(_, mhz, _, _)| *mhz).min()?;
-    let max_mhz = levels.iter().map(|(_, mhz, _, _)| *mhz).max()?;
+    // SMU v14 SCLK reports unlabeled 0=min, 1=current (or a fallback
+    // value), 2=max. The same shape can also be a genuine three-level
+    // table, so omit its ambiguous level rather than report a false index.
+    let sclk_three_rows = sclk && levels.len() == 3 && levels.iter().map(|row| row.0).eq([0, 1, 2]);
+    let min_mhz = if sclk_three_rows {
+        levels[0].1
+    } else {
+        levels.iter().map(|(_, mhz, _, _)| *mhz).min()?
+    };
+    let max_mhz = if sclk_three_rows {
+        levels[2].1
+    } else {
+        levels.iter().map(|(_, mhz, _, _)| *mhz).max()?
+    };
     let current = levels.iter().find(|(_, _, current, _)| *current);
-    let has_min_max_rows = levels.iter().any(|(_, _, _, marked)| *marked);
+    let has_min_max_rows = sclk_three_rows || levels.iter().any(|(_, _, _, marked)| *marked);
     Some(DpmClockInfo {
         min_mhz,
         max_mhz,
@@ -219,7 +231,7 @@ fn read_apu_sysfs_details(sysfs_path: &std::path::Path, detail: &mut HashMap<Str
         let Ok(contents) = std::fs::read_to_string(sysfs_path.join(file)) else {
             continue;
         };
-        let Some(clock) = parse_pp_dpm_clock_levels(&contents) else {
+        let Some(clock) = parse_pp_dpm_clock_levels(&contents, file == "pp_dpm_sclk") else {
             continue;
         };
         detail.insert(

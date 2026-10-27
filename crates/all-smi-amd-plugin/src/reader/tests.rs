@@ -139,16 +139,17 @@ mod tests {
 
     #[test]
     fn pp_dpm_parser_reads_the_observed_sysfs_fixture() {
-        let parsed = parse_pp_dpm_clock_levels(include_str!(
-            "../../../../tests/fixtures/amd-apu/pp-dpm-sclk.txt"
-        ))
+        let parsed = parse_pp_dpm_clock_levels(
+            include_str!("../../../../tests/fixtures/amd-apu/pp-dpm-sclk.txt"),
+            true,
+        )
         .unwrap();
         assert_eq!(
             parsed,
             DpmClockInfo {
                 min_mhz: 600,
                 max_mhz: 2900,
-                current_level: Some(0),
+                current_level: None,
                 current_mhz: Some(600),
             }
         );
@@ -157,7 +158,8 @@ mod tests {
     #[test]
     fn pp_dpm_parser_does_not_treat_smu_v14_min_current_max_rows_as_levels() {
         let parsed = parse_pp_dpm_clock_levels(
-            "0: min / 600Mhz\n1: 1200Mhz *\n2: max / 2900Mhz\n",
+            "0: 600Mhz\n1: 1200Mhz *\n2: 2900Mhz\n",
+            true,
         )
         .unwrap();
         assert_eq!(
@@ -169,6 +171,13 @@ mod tests {
                 current_mhz: Some(1200),
             }
         );
+    }
+
+    #[test]
+    fn dpm_three_level_non_sclk_remains_an_indexed_table() {
+        let parsed = parse_pp_dpm_clock_levels("0: 400Mhz\n1: 800Mhz *\n2: 1000Mhz\n", false).unwrap();
+        assert_eq!(parsed.current_level, Some(1));
+        assert_eq!(parsed.current_mhz, Some(800));
     }
 
     #[test]
