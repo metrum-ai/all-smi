@@ -113,6 +113,15 @@ mod tests {
     }
 
     #[test]
+    fn gpu_metrics_v3_sentinels_are_not_clamped_into_measurements() {
+        assert_eq!(valid_metrics_percent(80), Some(80.0));
+        assert_eq!(valid_metrics_percent(101), None);
+        assert_eq!(valid_metrics_percent(u16::MAX), None);
+        assert_eq!(valid_metrics_u16(614), Some(614));
+        assert_eq!(valid_metrics_u16(u16::MAX), None);
+    }
+
+    #[test]
     fn non_finite_process_percentages_are_rejected_not_zeroed() {
         assert_eq!(finite_process_percentages(0.0, 0.0), Some((0.0, 0.0)));
         assert_eq!(finite_process_percentages(f64::NAN, 1.0), None);
@@ -129,10 +138,10 @@ mod tests {
     }
 
     #[test]
-    fn pp_dpm_parser_reports_current_level_and_clock_range() {
-        let parsed = parse_pp_dpm_clock_levels(
-            "0: 600Mhz *\n1: 1100Mhz \n2: 2900Mhz \ninvalid\n",
-        )
+    fn pp_dpm_parser_reads_the_observed_sysfs_fixture() {
+        let parsed = parse_pp_dpm_clock_levels(include_str!(
+            "../../../../tests/fixtures/amd-apu/pp-dpm-sclk.txt"
+        ))
         .unwrap();
         assert_eq!(
             parsed,
@@ -143,8 +152,41 @@ mod tests {
                 current_mhz: Some(600),
             }
         );
-        assert_eq!(active_power_profile("0: BOOTUP_DEFAULT \n1: 3D Fullscreen *\n"), Some("1:3D Fullscreen".to_string()));
-        assert_eq!(active_power_profile("0: BOOTUP_DEFAULT\n"), None);
+    }
+
+    #[test]
+    fn pp_dpm_parser_does_not_treat_smu_v14_min_current_max_rows_as_levels() {
+        let parsed = parse_pp_dpm_clock_levels(
+            "0: min / 600Mhz\n1: 1200Mhz *\n2: max / 2900Mhz\n",
+        )
+        .unwrap();
+        assert_eq!(
+            parsed,
+            DpmClockInfo {
+                min_mhz: 600,
+                max_mhz: 2900,
+                current_level: None,
+                current_mhz: Some(1200),
+            }
+        );
+    }
+
+    #[test]
+    fn power_profile_parser_accepts_real_kernel_line_variants_and_skips_status_line() {
+        assert_eq!(
+            active_power_profile(" 1 3D_FULL_SCREEN*\n 2 POWERSAVE\n"),
+            Some("1:3D_FULL_SCREEN".to_string())
+        );
+        assert_eq!(
+            active_power_profile(" 1 3D_FULL_SCREEN*:\n"),
+            Some("1:3D_FULL_SCREEN".to_string())
+        );
+        assert_eq!(
+            active_power_profile("  1 3D_FULL_SCREEN *: details\nS: 3D_FULL_SCREEN\n"),
+            Some("1:3D_FULL_SCREEN".to_string())
+        );
+        assert_eq!(active_power_profile("S: 3D_FULL_SCREEN *\n"), None);
+        assert_eq!(active_power_profile(""), None);
     }
 
     #[test]
@@ -157,9 +199,15 @@ mod tests {
             &[("spl", Some(94_236_815)), ("prochot", Some(0))],
         );
 
-        assert_eq!(detail.get("Frequency: GFX").map(String::as_str), Some("611"));
-        assert_eq!(detail.get("Frequency: SOC").map(String::as_str), Some("602"));
-        assert!(!detail.contains_key("Frequency: IPUCLK"));
+        assert_eq!(
+            detail.get("Average frequency: GFX").map(String::as_str),
+            Some("611")
+        );
+        assert_eq!(
+            detail.get("Average frequency: SOC").map(String::as_str),
+            Some("602")
+        );
+        assert!(!detail.contains_key("Average frequency: IPUCLK"));
         assert_eq!(detail.get("Engine: VCN").map(String::as_str), Some("0"));
         assert_eq!(
             detail.get("Throttle residency raw: spl").map(String::as_str),
@@ -169,6 +217,65 @@ mod tests {
             detail.get("Throttle residency raw: prochot").map(String::as_str),
             Some("0")
         );
+    }
+
+    #[test]
+    fn apu_metric_sentinels_and_invalid_vcn_are_omitted() {
+        let mut detail = HashMap::new();
+        insert_apu_metric_details(
+            &mut detail,
+            &[("GFX", Some(u16::MAX)), ("SOC", Some(601))],
+            Some(u16::MAX),
+            &[("spl", Some(u32::MAX)), ("fppt", Some(42))],
+        );
+        assert!(!detail.contains_key("Average frequency: GFX"));
+        assert_eq!(detail.get("Average frequency: SOC").map(String::as_str), Some("601"));
+        assert!(!detail.contains_key("Engine: VCN"));
+        assert!(!detail.contains_key("Throttle residency raw: spl"));
+        assert_eq!(detail.get("Throttle residency raw: fppt").map(String::as_str), Some("42"));
+    }
+
+    #[test]
+    fn vcn_placeholder_falls_back_to_sysfs_and_valid_zero_is_preserved() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("vcn_busy_percent"), "37\n").unwrap();
+        assert_eq!(vcn_activity_percent(Some(u16::MAX), dir.path()), Some(37));
+        assert_eq!(vcn_activity_percent(Some(101), dir.path()), Some(37));
+        assert_eq!(vcn_activity_percent(Some(0), dir.path()), Some(0));
+        std::fs::remove_file(dir.path().join("vcn_busy_percent")).unwrap();
+        assert_eq!(vcn_activity_percent(Some(u16::MAX), dir.path()), None);
+    }
+
+    #[test]
+    fn cached_apu_sysfs_details_refresh_after_ten_seconds() {
+        use std::time::{Duration, Instant};
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("pp_dpm_sclk"), "0: 600Mhz *\n1: 2900Mhz\n").unwrap();
+        let cache = ApuSysfsDetailsCache::new(None);
+        let t0 = Instant::now();
+        let mut detail = HashMap::new();
+        read_cached_apu_sysfs_details_at(dir.path(), &cache, &mut detail, t0);
+        assert_eq!(detail.get("DPM min MHz: SCLK").map(String::as_str), Some("600"));
+
+        std::fs::write(dir.path().join("pp_dpm_sclk"), "0: 800Mhz *\n1: 2900Mhz\n").unwrap();
+        let mut still_cached = HashMap::new();
+        read_cached_apu_sysfs_details_at(
+            dir.path(),
+            &cache,
+            &mut still_cached,
+            t0 + Duration::from_secs(9),
+        );
+        assert_eq!(still_cached.get("DPM min MHz: SCLK").map(String::as_str), Some("600"));
+
+        let mut refreshed = HashMap::new();
+        read_cached_apu_sysfs_details_at(
+            dir.path(),
+            &cache,
+            &mut refreshed,
+            t0 + Duration::from_secs(10),
+        );
+        assert_eq!(refreshed.get("DPM min MHz: SCLK").map(String::as_str), Some("800"));
     }
 
     #[test]

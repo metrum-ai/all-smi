@@ -230,6 +230,9 @@ pub const ENGINE_DETAIL_KEY_PREFIX: &str = "Engine: ";
 /// touching.
 pub const FREQUENCY_DOMAIN_DETAIL_KEY_PREFIX: &str = "Frequency: ";
 
+/// Reserved prefix for time-filtered average clock domains from AMD APU `gpu_metrics` v3.
+pub const AVERAGE_FREQUENCY_DOMAIN_DETAIL_KEY_PREFIX: &str = "Average frequency: ";
+
 /// Prefix for raw APU throttle-residency counters from `gpu_metrics` v3.
 /// Their unit is not documented by the kernel ABI, so consumers must not
 /// label them as seconds or percentages.
@@ -261,12 +264,15 @@ pub const AMD_POWER_PROFILE_DETAIL_KEY: &str = "amd_power_profile";
 /// * `Engine: ` (Intel sysfs and Level Zero, Linux and Windows alike):
 ///   `all_smi_gpu_engine_utilization`, one row per engine class, keyed by
 ///   the `engine` label carrying the class name.
-/// * `Frequency: ` (Intel Level Zero):
+/// * `Frequency: ` (Intel Level Zero and AMD sysfs):
 ///   `all_smi_gpu_clock_domain_current_mhz`, one row per clock domain,
 ///   keyed by the `domain` label carrying the domain name.
+/// * `Average frequency: ` (AMD APU `gpu_metrics` v3):
+///   `all_smi_gpu_clock_domain_average_mhz`, one row per average clock domain.
 pub const VOLATILE_DETAIL_KEY_PREFIXES: &[&str] = &[
     ENGINE_DETAIL_KEY_PREFIX,
     FREQUENCY_DOMAIN_DETAIL_KEY_PREFIX,
+    AVERAGE_FREQUENCY_DOMAIN_DETAIL_KEY_PREFIX,
     THROTTLE_RESIDENCY_RAW_DETAIL_KEY_PREFIX,
     DPM_CLOCK_LEVEL_DETAIL_KEY_PREFIX,
     DPM_CLOCK_MIN_MHZ_DETAIL_KEY_PREFIX,

@@ -22,6 +22,7 @@ use libamdgpu_top::stat::{self, FdInfoStat, ProcInfo};
 use libamdgpu_top::{AppDeviceInfo, DevicePath, VramUsage};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 // GPU metric validation constants
 const MAX_GPU_UTILIZATION: f64 = 100.0; // Maximum utilization percentage
@@ -47,6 +48,14 @@ fn clamp_fan_rpm(rpm: Option<u32>) -> Option<u32> {
 /// Convert the `gpu_metrics` DRAM bandwidth field (decimal MB/s) to bytes/s.
 fn dram_bandwidth_mb_s_to_bytes_per_second(value: u16) -> u64 {
     u64::from(value) * 1_000_000
+}
+
+fn valid_metrics_percent(value: u16) -> Option<f64> {
+    (value <= 100).then(|| f64::from(value))
+}
+
+fn valid_metrics_u16(value: u16) -> Option<u16> {
+    (value != u16::MAX).then_some(value)
 }
 
 /// Convert a `gpu_metrics` socket power reading to watts.
@@ -111,38 +120,77 @@ fn parse_pp_dpm_clock_levels(contents: &str) -> Option<DpmClockInfo> {
         let Ok(index) = index.trim().parse::<u32>() else {
             continue;
         };
-        let Some(token) = rest.split_whitespace().next() else {
-            continue;
-        };
-        let Some((digits, unit)) = token.split_at_checked(token.len().saturating_sub(3)) else {
-            continue;
-        };
-        if !unit.eq_ignore_ascii_case("mhz") {
-            continue;
+        let mut mhz = None;
+        for token in rest.split_whitespace() {
+            let token = token.trim_matches(|ch: char| !ch.is_ascii_alphanumeric());
+            let Some((digits, unit)) = token.split_at_checked(token.len().saturating_sub(3)) else {
+                continue;
+            };
+            if !unit.eq_ignore_ascii_case("mhz") {
+                continue;
+            }
+            if let Ok(value) = digits.parse::<u32>() {
+                mhz = Some(value);
+                break;
+            }
         }
-        let Ok(mhz) = digits.parse::<u32>() else {
+        let Some(mhz) = mhz else {
             continue;
         };
-        let current = rest.split_whitespace().any(|part| part == "*");
-        levels.push((index, mhz, current));
+        let current = rest.contains('*');
+        let range_marker = rest
+            .split_whitespace()
+            .any(|word| matches!(word.to_ascii_lowercase().as_str(), "min" | "max"));
+        levels.push((index, mhz, current, range_marker));
     }
-    let min_mhz = levels.iter().map(|(_, mhz, _)| *mhz).min()?;
-    let max_mhz = levels.iter().map(|(_, mhz, _)| *mhz).max()?;
-    let current = levels.iter().find(|(_, _, current)| *current);
+    let min_mhz = levels.iter().map(|(_, mhz, _, _)| *mhz).min()?;
+    let max_mhz = levels.iter().map(|(_, mhz, _, _)| *mhz).max()?;
+    let current = levels.iter().find(|(_, _, current, _)| *current);
+    let has_min_max_rows = levels.iter().any(|(_, _, _, marked)| *marked);
     Some(DpmClockInfo {
         min_mhz,
         max_mhz,
-        current_level: current.map(|(index, _, _)| *index),
-        current_mhz: current.map(|(_, mhz, _)| *mhz),
+        // On SMU v14, min/current/max are synthetic row labels, not table
+        // indices. Keep the current frequency but do not expose that row's
+        // ordinal as a DPM level.
+        current_level: (!has_min_max_rows)
+            .then(|| current.map(|(index, _, _, _)| *index))
+            .flatten(),
+        current_mhz: current.map(|(_, mhz, _, _)| *mhz),
     })
 }
 
 fn active_power_profile(contents: &str) -> Option<String> {
-    let line = contents.lines().find(|line| line.contains('*'))?;
-    let (index, name) = line.split_once(':')?;
-    let index = index.trim().parse::<u32>().ok()?;
-    let name = name.split('*').next()?.trim();
-    (!name.is_empty()).then(|| format!("{index}:{name}"))
+    for line in contents.lines().filter(|line| line.contains('*')) {
+        // Kernel variants use either `1 NAME*`, `1 NAME*:`, or `1: NAME *:`.
+        // The non-numeric `S:` status line is intentionally ignored.
+        let line = line.trim();
+        let parsed = match line.split_once(':') {
+            Some((prefix, rest)) if prefix.trim().parse::<u32>().is_ok() => {
+                Some((prefix.trim(), rest.trim()))
+            }
+            _ => line
+                .split_once(char::is_whitespace)
+                .map(|(index, rest)| (index.trim(), rest.trim())),
+        };
+        let Some((index_token, rest)) = parsed else {
+            continue;
+        };
+        let Ok(index) = index_token.parse::<u32>() else {
+            continue;
+        };
+        let name = rest
+            .split('*')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .trim_end_matches(':')
+            .trim();
+        if !name.is_empty() {
+            return Some(format!("{index}:{name}"));
+        }
+    }
+    None
 }
 
 fn read_vcn_busy_percent(sysfs_path: &std::path::Path) -> Option<u16> {
@@ -152,6 +200,12 @@ fn read_vcn_busy_percent(sysfs_path: &std::path::Path) -> Option<u16> {
         .parse::<u16>()
         .ok()?;
     (busy <= 100).then_some(busy)
+}
+
+fn vcn_activity_percent(metrics_value: Option<u16>, sysfs_path: &std::path::Path) -> Option<u16> {
+    metrics_value
+        .filter(|activity| *activity <= 100)
+        .or_else(|| read_vcn_busy_percent(sysfs_path))
 }
 
 fn read_apu_sysfs_details(sysfs_path: &std::path::Path, detail: &mut HashMap<String, String>) {
@@ -203,6 +257,38 @@ fn read_apu_sysfs_details(sysfs_path: &std::path::Path, detail: &mut HashMap<Str
     }
 }
 
+const APU_SYSFS_DETAILS_CACHE_TTL: Duration = Duration::from_secs(10);
+type ApuSysfsDetailsCache = Mutex<Option<(Instant, HashMap<String, String>)>>;
+
+fn read_cached_apu_sysfs_details(
+    sysfs_path: &std::path::Path,
+    cache: &ApuSysfsDetailsCache,
+    detail: &mut HashMap<String, String>,
+) {
+    read_cached_apu_sysfs_details_at(sysfs_path, cache, detail, Instant::now());
+}
+
+fn read_cached_apu_sysfs_details_at(
+    sysfs_path: &std::path::Path,
+    cache: &ApuSysfsDetailsCache,
+    detail: &mut HashMap<String, String>,
+    now: Instant,
+) {
+    let mut cache = cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if cache.as_ref().is_none_or(|(fetched_at, _)| {
+        now.saturating_duration_since(*fetched_at) >= APU_SYSFS_DETAILS_CACHE_TTL
+    }) {
+        let mut fresh = HashMap::new();
+        read_apu_sysfs_details(sysfs_path, &mut fresh);
+        *cache = Some((now, fresh));
+    }
+    if let Some((_, cached)) = cache.as_ref() {
+        detail.extend(cached.clone());
+    }
+}
+
 fn insert_apu_metric_details(
     detail: &mut HashMap<String, String>,
     clocks_mhz: &[(&str, Option<u16>)],
@@ -210,15 +296,23 @@ fn insert_apu_metric_details(
     throttle_residency: &[(&str, Option<u32>)],
 ) {
     for (domain, frequency_mhz) in clocks_mhz {
-        if let Some(frequency_mhz) = frequency_mhz.filter(|frequency| *frequency > 0) {
-            detail.insert(format!("Frequency: {domain}"), frequency_mhz.to_string());
+        if let Some(frequency_mhz) =
+            frequency_mhz.filter(|frequency| *frequency > 0 && *frequency != u16::MAX)
+        {
+            detail.insert(
+                format!(
+                "{}{domain}",
+                all_smi::device::readers::detail_keys::AVERAGE_FREQUENCY_DOMAIN_DETAIL_KEY_PREFIX
+            ),
+                frequency_mhz.to_string(),
+            );
         }
     }
-    if let Some(activity) = vcn_activity {
+    if let Some(activity) = vcn_activity.filter(|activity| *activity <= 100) {
         detail.insert("Engine: VCN".to_string(), activity.to_string());
     }
     for (reason, raw_residency) in throttle_residency {
-        if let Some(raw_residency) = raw_residency {
+        if let Some(raw_residency) = raw_residency.filter(|value| *value != u32::MAX) {
             detail.insert(
                 format!("Throttle residency raw: {reason}"),
                 raw_residency.to_string(),
@@ -326,6 +420,7 @@ struct AmdGpuDevice {
     device_handle: DeviceHandle,
     vram_usage: Mutex<VramUsage>, // Protected by mutex for thread-safe updates
     static_info: OnceLock<DeviceStaticInfo>, // Cached static device information
+    apu_sysfs_details: ApuSysfsDetailsCache,
 }
 
 pub struct AmdGpuReader {
@@ -373,6 +468,7 @@ impl AmdGpuReader {
                                 device_handle: amdgpu_dev,
                                 vram_usage: Mutex::new(vram_usage),
                                 static_info: OnceLock::new(),
+                                apu_sysfs_details: Mutex::new(None),
                             });
                         }
                         Err(e) => {

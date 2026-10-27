@@ -709,9 +709,44 @@ impl<'a> GpuMetricExporter<'a> {
                 );
         }
 
-        // APU throttle-residency values are exposed as raw kernel counters.
-        // The gpu_metrics ABI does not document a portable time unit, so do
-        // not label or convert these values as seconds or percentages.
+        // AMD APU gpu_metrics v3 clocks are time-filtered averages, not
+        // instantaneous readings. Keep them in a distinct family from the
+        // current Level Zero/sysfs clock-domain series.
+        for (key, mhz) in info.detail.iter().filter(|(key, _)| {
+            key.starts_with(detail_keys::AVERAGE_FREQUENCY_DOMAIN_DETAIL_KEY_PREFIX)
+        }) {
+            let Some(mhz_value) = detail_keys::leading_number(mhz) else {
+                continue;
+            };
+            let Some(domain) =
+                key.strip_prefix(detail_keys::AVERAGE_FREQUENCY_DOMAIN_DETAIL_KEY_PREFIX)
+            else {
+                continue;
+            };
+            let domain_labels = [
+                ("gpu", info.name.as_str()),
+                ("instance", info.instance.as_str()),
+                ("gpu_uuid", info.uuid.as_str()),
+                ("gpu_index", row.index_str.as_str()),
+                ("domain", domain),
+            ];
+            builder
+                .help(
+                    "all_smi_gpu_clock_domain_average_mhz",
+                    "Time-filtered average GPU clock-domain frequency in MHz",
+                )
+                .type_("all_smi_gpu_clock_domain_average_mhz", "gauge")
+                .metric(
+                    "all_smi_gpu_clock_domain_average_mhz",
+                    &domain_labels,
+                    mhz_value,
+                );
+        }
+
+        // APU throttle-residency values are exposed as raw cumulative
+        // counters. The values increase until reset or u32 wrap; the
+        // gpu_metrics ABI does not document a portable unit.
+
         for (key, raw) in info.detail.iter().filter(|(key, _)| {
             key.starts_with(detail_keys::THROTTLE_RESIDENCY_RAW_DETAIL_KEY_PREFIX)
         }) {
@@ -733,9 +768,9 @@ impl<'a> GpuMetricExporter<'a> {
             builder
                 .help(
                     "all_smi_gpu_throttle_residency_raw",
-                    "Raw AMD APU throttle-residency counter; unit is unspecified by the kernel ABI",
+                    "Cumulative raw AMD APU throttle-residency counter; monotonically increasing until reset or 32-bit wrap; unit is unspecified by the kernel ABI",
                 )
-                .type_("all_smi_gpu_throttle_residency_raw", "gauge")
+                .type_("all_smi_gpu_throttle_residency_raw", "counter")
                 .metric("all_smi_gpu_throttle_residency_raw", &reason_labels, value);
         }
 
@@ -1912,6 +1947,8 @@ mod tests {
             .insert("Engine: compute (L0)".to_string(), "8.00%".to_string());
         gpu.detail
             .insert("Frequency: gpu (L0)".to_string(), "2400 MHz".to_string());
+        gpu.detail
+            .insert("Average frequency: GFX".to_string(), "614".to_string());
         gpu.detail.insert(
             "Throttle residency raw: spl".to_string(),
             "94236815".to_string(),
@@ -1958,6 +1995,12 @@ mod tests {
             "the domain label must carry the rest of the key: {domain}"
         );
         assert!(domain.ends_with(" 2400"), "expected 2400 MHz, got {domain}");
+        let average = output
+            .lines()
+            .find(|l| l.starts_with("all_smi_gpu_clock_domain_average_mhz{"))
+            .unwrap_or_else(|| panic!("average clock domain gauge missing:\n{output}"));
+        assert!(average.contains("domain=\"GFX\""));
+        assert!(average.ends_with(" 614"));
 
         let throttle = output
             .lines()
@@ -1965,6 +2008,8 @@ mod tests {
             .unwrap_or_else(|| panic!("throttle residency gauge missing:\n{output}"));
         assert!(throttle.contains("reason=\"spl\""));
         assert!(throttle.ends_with(" 94236815"));
+        assert!(output.contains("# TYPE all_smi_gpu_throttle_residency_raw counter"));
+        assert!(output.contains("monotonically increasing until reset or 32-bit wrap"));
         assert!(output.contains("all_smi_gpu_clock_domain_dpm_current_level{"));
         assert!(output.contains("all_smi_gpu_clock_domain_dpm_min_mhz{"));
         assert!(output.contains("all_smi_gpu_clock_domain_dpm_max_mhz{"));
@@ -1981,6 +2026,10 @@ mod tests {
         assert!(
             !info.contains("frequency__gpu"),
             "a runtime-built clock key reached the identity series: {info}"
+        );
+        assert!(
+            !info.contains("average_frequency__gfx"),
+            "an average clock key reached the identity series: {info}"
         );
         assert!(
             !info.contains("throttle_residency"),
