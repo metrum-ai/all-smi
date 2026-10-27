@@ -61,6 +61,9 @@ pub const SOCKET_POWER_WATTS_DETAIL_KEY: &str = "socket_power_watts";
 pub const GTT_MEMORY_USED_BYTES_DETAIL_KEY: &str = "gtt_memory_used_bytes";
 pub const GTT_MEMORY_TOTAL_BYTES_DETAIL_KEY: &str = "gtt_memory_total_bytes";
 
+/// Availability marker used when device memory counters are not exposed.
+pub const MEMORY_STATUS_DETAIL_KEY: &str = "memory_status";
+
 /// Current PCIe link generation of a device, as a bare decimal number
 /// (`"4"`) with no `Gen` prefix and no formatting.
 ///

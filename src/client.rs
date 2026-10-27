@@ -397,10 +397,18 @@ impl AllSmi {
     /// # Ok::<(), all_smi::Error>(())
     /// ```
     pub fn get_process_info(&self) -> Vec<ProcessInfo> {
+        let gpu_info = self.get_gpu_info();
         let mut all_processes = Vec::new();
         for reader in &self.gpu_readers {
             all_processes.extend(reader.get_process_info());
         }
+        crate::device::process_list::align_gpu_process_device_indices(
+            gpu_info
+                .iter()
+                .enumerate()
+                .map(|(index, gpu)| (index, gpu.uuid.as_str())),
+            &mut all_processes,
+        );
         all_processes
     }
 

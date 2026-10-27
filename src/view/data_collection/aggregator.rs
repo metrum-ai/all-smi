@@ -186,25 +186,23 @@ impl DataAggregator {
             // rather than pushing a fabricated 0 into the history graphs.
             let avg_utilization = crate::metrics::gpu_readings::mean_utilization(&state.gpu_info);
 
-            let avg_memory = state
+            let memory_readings: Vec<f64> = state
                 .gpu_info
                 .iter()
-                .map(|gpu| {
-                    if gpu.total_memory > 0 {
-                        (gpu.used_memory as f64 / gpu.total_memory as f64) * 100.0
-                    } else {
-                        0.0
-                    }
-                })
-                .sum::<f64>()
-                / state.gpu_info.len() as f64;
+                .filter(|gpu| gpu.total_memory > 0)
+                .map(|gpu| (gpu.used_memory as f64 / gpu.total_memory as f64) * 100.0)
+                .collect();
+            let avg_memory = (!memory_readings.is_empty())
+                .then(|| memory_readings.iter().sum::<f64>() / memory_readings.len() as f64);
 
             let avg_temperature = crate::metrics::gpu_readings::mean_temperature(&state.gpu_info);
 
             if let Some(util) = avg_utilization {
                 state.utilization_history.push_back(util);
             }
-            state.memory_history.push_back(avg_memory);
+            if let Some(memory) = avg_memory {
+                state.memory_history.push_back(memory);
+            }
             if let Some(temp) = avg_temperature {
                 state.temperature_history.push_back(temp);
             }
@@ -320,18 +318,17 @@ impl DataAggregator {
             return 0.0;
         }
 
-        state
+        let readings: Vec<f64> = state
             .gpu_info
             .iter()
-            .map(|gpu| {
-                if gpu.total_memory > 0 {
-                    (gpu.used_memory as f64 / gpu.total_memory as f64) * 100.0
-                } else {
-                    0.0
-                }
-            })
-            .sum::<f64>()
-            / state.gpu_info.len() as f64
+            .filter(|gpu| gpu.total_memory > 0)
+            .map(|gpu| (gpu.used_memory as f64 / gpu.total_memory as f64) * 100.0)
+            .collect();
+        if readings.is_empty() {
+            0.0
+        } else {
+            readings.iter().sum::<f64>() / readings.len() as f64
+        }
     }
 
     /// Calculate average CPU utilization
@@ -409,11 +406,71 @@ impl Default for DataAggregator {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::thread;
     use std::time::Duration;
 
     use super::*;
     use crate::device::ChassisInfo;
+
+    fn gpu_with_memory(
+        uuid: &str,
+        used_memory: u64,
+        total_memory: u64,
+    ) -> crate::device::types::GpuInfo {
+        crate::device::types::GpuInfo {
+            uuid: uuid.to_string(),
+            time: String::new(),
+            name: uuid.to_string(),
+            device_type: "GPU".to_string(),
+            host_id: "host".to_string(),
+            hostname: "host".to_string(),
+            instance: "host".to_string(),
+            utilization: 10.0,
+            ane_utilization: 0.0,
+            dla_utilization: None,
+            tensorcore_utilization: None,
+            temperature: 0,
+            used_memory,
+            total_memory,
+            frequency: 0,
+            power_consumption: 0.0,
+            gpu_core_count: None,
+            temperature_threshold_slowdown: None,
+            temperature_threshold_shutdown: None,
+            temperature_threshold_max_operating: None,
+            temperature_threshold_acoustic: None,
+            performance_state: None,
+            fan_speed_rpm: None,
+            numa_node_id: None,
+            gsp_firmware_mode: None,
+            gsp_firmware_version: None,
+            nvlink_remote_devices: Vec::new(),
+            gpm_metrics: None,
+            throttle_reasons: None,
+            energy_hw_millijoules: None,
+            remapped_rows: None,
+            nvlink_errors: Vec::new(),
+            utilization_samples: None,
+            xid_event_counts: HashMap::new(),
+            detail: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn gpu_memory_average_ignores_devices_without_memory_totals() {
+        let mut state = AppState::new();
+        state.gpu_info = vec![
+            gpu_with_memory("iGPU", 50, 100),
+            gpu_with_memory("NPU", 0, 0),
+        ];
+        let aggregator = DataAggregator::new();
+
+        aggregator.update_gpu_history(&mut state);
+
+        assert_eq!(state.memory_history.back(), Some(&50.0));
+        assert_eq!(DataAggregator::calculate_avg_gpu_memory(&state), 50.0);
+    }
 
     #[test]
     fn remote_chassis_energy_uses_endpoint_identity_for_duplicate_hostnames() {

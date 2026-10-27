@@ -1,0 +1,5 @@
+drm-driver:	amdxdna_accel_driver
+drm-client-id:	2083
+drm-pdev:	0000:c3:00.1
+drm-total-memory:	0
+drm-shared-memory:	0

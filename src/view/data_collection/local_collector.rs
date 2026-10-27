@@ -96,6 +96,13 @@ fn collect_from_gpu_readers(readers: &[Box<dyn GpuReader>]) -> GpuCollection {
         gpu_processes.extend(procs);
         gpu_pids.extend(pids);
     }
+    crate::device::process_list::align_gpu_process_device_indices(
+        gpu_info
+            .iter()
+            .enumerate()
+            .map(|(index, gpu)| (index, gpu.uuid.as_str())),
+        &mut gpu_processes,
+    );
 
     // vGPU and MIG run on the same readers set so they share NVML handle
     // caching with the main GPU collection.

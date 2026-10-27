@@ -1,4 +1,5 @@
 // Copyright 2025 Lablup Inc. and Jeongkyu Shin
+// Copyright (c) 2026 Metrum AI, Inc. All rights reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -69,22 +70,15 @@ impl GpuReader for AmdXdnaNpuReader {
     fn get_process_info(&self) -> Vec<ProcessInfo> {
         self.devices()
             .iter()
-            .flat_map(|gpu| {
+            .enumerate()
+            .flat_map(|(npu_index, gpu)| {
                 let Some(device_node) = gpu.detail.get("device_node") else {
                     return Vec::new();
                 };
-                let Some(accel_name) = Path::new(device_node).file_name().and_then(|v| v.to_str())
-                else {
-                    return Vec::new();
-                };
-                let device_id = accel_name
-                    .strip_prefix("accel")
-                    .and_then(|index| index.parse::<usize>().ok())
-                    .unwrap_or(0);
                 read_fdinfo_clients(
                     &self.proc_root,
                     Path::new(device_node),
-                    device_id,
+                    npu_index,
                     &gpu.uuid,
                 )
             })
@@ -126,12 +120,12 @@ fn read_fdinfo_clients(
             continue;
         };
         let fd_dir = process.path().join("fd");
+        // `/proc/<pid>/fd` is commonly unreadable under ptrace/Yama policy;
+        // inaccessible processes are an unavailable client list, not an error.
         let Ok(fds) = fs::read_dir(fd_dir) else {
             continue;
         };
-        let mut client = false;
-        let mut memory_reported = false;
-        let mut used_memory = 0_u64;
+        let mut memory_by_client: HashMap<String, u64> = HashMap::new();
         for fd in fds.flatten() {
             let Ok(target) = fs::read_link(fd.path()) else {
                 continue;
@@ -139,19 +133,31 @@ fn read_fdinfo_clients(
             if !same_accel_node(&target, device_node) {
                 continue;
             }
-            client = true;
-            if let Ok(fdinfo) =
-                fs::read_to_string(process.path().join("fdinfo").join(fd.file_name()))
-                && let Some(memory_bytes) = parse_fdinfo_memory_bytes(&fdinfo)
-            {
-                used_memory = used_memory.saturating_add(memory_bytes);
-                memory_reported = true;
-            }
+            let Ok(fdinfo) = fs::read_to_string(process.path().join("fdinfo").join(fd.file_name()))
+            else {
+                continue;
+            };
+            let Some(parsed) = parse_amdxdna_fdinfo(&fdinfo) else {
+                continue;
+            };
+            let Some(memory_bytes) = parsed.memory_bytes else {
+                continue;
+            };
+            let client_key = parsed.client_id.map_or_else(
+                || format!("fd:{}", fd.file_name().to_string_lossy()),
+                |client_id| format!("client:{client_id}"),
+            );
+            // Multiple fd descriptors for the same DRM client carry the
+            // same per-client allocation totals. Count the client once.
+            memory_by_client
+                .entry(client_key)
+                .and_modify(|existing| *existing = (*existing).max(memory_bytes))
+                .or_insert(memory_bytes);
         }
-        // ProcessInfo has no nullable BO-memory field. Omit clients whose
-        // fdinfo cannot supply a recognized reading rather than publishing
-        // an ambiguous zero.
-        if client && memory_reported {
+        if !memory_by_client.is_empty() {
+            let used_memory = memory_by_client
+                .values()
+                .fold(0_u64, |total, bytes| total.saturating_add(*bytes));
             clients.push(process_info_from_proc(
                 &process.path(),
                 pid,
@@ -172,25 +178,65 @@ fn same_accel_node(target: &Path, device_node: &Path) -> bool {
             .is_some_and(|parent| parent == "accel")
 }
 
-/// Parse standard DRM fdinfo `drm-memory-*` rows into bytes. Unknown units
-/// invalidate the reading rather than silently undercounting it.
-fn parse_fdinfo_memory_bytes(fdinfo: &str) -> Option<u64> {
+#[derive(Debug, PartialEq, Eq)]
+struct AmdXdnaFdInfo {
+    client_id: Option<u64>,
+    memory_bytes: Option<u64>,
+}
+
+fn parse_amdxdna_fdinfo(fdinfo: &str) -> Option<AmdXdnaFdInfo> {
+    let lines: Vec<&str> = fdinfo.lines().collect();
+    let driver = lines
+        .iter()
+        .find_map(|line| line.strip_prefix("drm-driver:").map(str::trim))?;
+    if !matches!(driver, "amdxdna_accel_driver" | "amdxdna") {
+        return None;
+    }
+    let client_id = lines
+        .iter()
+        .find_map(|line| line.strip_prefix("drm-client-id:").map(str::trim))
+        .and_then(|value| value.parse::<u64>().ok());
+
+    let total_rows: Vec<&str> = lines
+        .iter()
+        .copied()
+        .filter(|line| line.starts_with("drm-total-"))
+        .collect();
+    let memory_bytes = if total_rows.is_empty() {
+        parse_drm_memory_rows(
+            lines
+                .iter()
+                .copied()
+                .filter(|line| line.starts_with("drm-memory-")),
+        )
+    } else {
+        parse_drm_memory_rows(total_rows.into_iter())
+    };
+    Some(AmdXdnaFdInfo {
+        client_id,
+        memory_bytes,
+    })
+}
+
+/// Sum DRM total-memory rows, preferring the current `drm-total-*` form at
+/// the call site and accepting deprecated `drm-memory-*` only as fallback.
+/// Unitless values are bytes; the fdinfo spec also permits KiB and MiB.
+fn parse_drm_memory_rows<'a>(rows: impl Iterator<Item = &'a str>) -> Option<u64> {
     let mut found = false;
     let mut total = 0_u64;
-    for line in fdinfo
-        .lines()
-        .filter(|line| line.starts_with("drm-memory-"))
-    {
-        let mut fields = line.split_whitespace();
-        let _key = fields.next()?;
-        let value = fields.next()?.parse::<u64>().ok()?;
-        let unit = fields.next()?;
-        let bytes = match unit {
-            "KiB" | "kB" => value.checked_mul(1024)?,
-            "MiB" => value.checked_mul(1024 * 1024)?,
-            "B" => value,
-            _ => return None,
+    for line in rows {
+        let (_, value) = line.split_once(':')?;
+        let mut fields = value.split_whitespace();
+        let count = fields.next()?.parse::<u64>().ok()?;
+        let bytes = match fields.next() {
+            None => count,
+            Some("KiB") => count.checked_mul(1024)?,
+            Some("MiB") => count.checked_mul(1024 * 1024)?,
+            Some(_) => return None,
         };
+        if fields.next().is_some() {
+            return None;
+        }
         total = total.checked_add(bytes)?;
         found = true;
     }
@@ -243,8 +289,8 @@ fn process_info_from_proc(
             .to_string(),
         start_time: String::new(),
         cpu_time: 0,
-        // Expose the process name, not argv: NPU command lines may contain
-        // workload arguments or credentials and are not needed for clients.
+        // The generic process merge may replace this with its existing
+        // command metadata; this reader itself only has `/proc/<pid>/comm`.
         command: comm,
         ppid: number("PPid:").unwrap_or(0),
         threads: number("Threads:").unwrap_or(0),
@@ -287,7 +333,10 @@ fn gpu_info_from_node(
     let mut detail = HashMap::new();
     detail.insert("driver".to_string(), "amdxdna".to_string());
     detail.insert("device_node".to_string(), format!("/dev/accel/{node_name}"));
-    detail.insert("memory_status".to_string(), "unavailable".to_string());
+    detail.insert(
+        crate::device::readers::detail_keys::MEMORY_STATUS_DETAIL_KEY.to_string(),
+        "unavailable".to_string(),
+    );
     detail.insert("metrics_available".to_string(), "false".to_string());
     if let Some(slot) = pci_slot {
         detail.insert("pci_slot_name".to_string(), slot);
@@ -377,26 +426,47 @@ mod tests {
     }
 
     #[test]
-    fn parses_drm_fdinfo_memory_units_without_inventing_unknown_units() {
+    fn real_amdxdna_fdinfo_fixture_parses_driver_client_and_zero_byte_totals() {
+        let fdinfo = include_str!("../../../tests/fixtures/amdxdna/fdinfo-accel0.txt");
         assert_eq!(
-            parse_fdinfo_memory_bytes(
-                "drm-driver: amdxdna\ndrm-memory-local: 64 KiB\ndrm-memory-shared: 2 MiB\n"
-            ),
-            Some(64 * 1024 + 2 * 1024 * 1024)
+            parse_amdxdna_fdinfo(fdinfo),
+            Some(AmdXdnaFdInfo {
+                client_id: Some(2083),
+                memory_bytes: Some(0),
+            })
         );
-        assert_eq!(
-            parse_fdinfo_memory_bytes("drm-memory-local: 64 widgets\n"),
-            None
-        );
-        assert_eq!(
-            parse_fdinfo_memory_bytes("drm-memory-local: 64 KiB\ndrm-memory-shared: 2 pages\n"),
-            None
-        );
-        assert_eq!(parse_fdinfo_memory_bytes("drm-driver: amdxdna\n"), None);
     }
 
     #[test]
-    fn fdinfo_device_clients_are_scoped_and_command_lines_are_not_exposed() {
+    fn total_memory_rows_are_preferred_and_units_follow_fdinfo_spec() {
+        let fdinfo = "drm-driver: amdxdna_accel_driver\ndrm-total-memory: 100\ndrm-total-vram: 2 KiB\ndrm-memory-old: 99 MiB\n";
+        assert_eq!(
+            parse_amdxdna_fdinfo(fdinfo).unwrap().memory_bytes,
+            Some(100 + 2 * 1024)
+        );
+
+        let legacy = "drm-driver: amdxdna_accel_driver\ndrm-memory-local: 64 KiB\ndrm-memory-shared: 2 MiB\n";
+        assert_eq!(
+            parse_amdxdna_fdinfo(legacy).unwrap().memory_bytes,
+            Some(64 * 1024 + 2 * 1024 * 1024)
+        );
+        assert_eq!(
+            parse_amdxdna_fdinfo("drm-driver: amdxdna_accel_driver\ndrm-total-memory: 100\n")
+                .unwrap()
+                .memory_bytes,
+            Some(100)
+        );
+        assert_eq!(
+            parse_amdxdna_fdinfo("drm-driver: amdxdna_accel_driver\ndrm-total-memory: 100 kB\n")
+                .unwrap()
+                .memory_bytes,
+            None
+        );
+        assert!(parse_amdxdna_fdinfo("drm-driver: amdgpu\ndrm-total-memory: 100\n").is_none());
+    }
+
+    #[test]
+    fn fdinfo_clients_dedupe_client_ids_and_reject_other_drivers() {
         let class = tempfile::tempdir().expect("accel class tempdir");
         let device = class.path().join("accel0/device");
         fs::create_dir_all(&device).unwrap();
@@ -417,10 +487,22 @@ mod tests {
             "Name:\tpython-worker\nState:\tS (sleeping)\nUid:\t1000\t1000\t1000\t1000\nPPid:\t1\nThreads:\t2\nVmRSS:\t8 kB\nVmSize:\t16 kB\n",
         )
         .unwrap();
-        std::os::unix::fs::symlink("/dev/accel/accel0", process.join("fd/3")).unwrap();
+        for fd in ["3", "4", "5"] {
+            std::os::unix::fs::symlink("/dev/accel/accel0", process.join("fd").join(fd)).unwrap();
+        }
         fs::write(
             process.join("fdinfo/3"),
-            "drm-driver:\tamdxdna\ndrm-memory-local:\t64 KiB\n",
+            "drm-driver:\tamdxdna_accel_driver\ndrm-client-id:\t42\ndrm-total-memory:\t100\n",
+        )
+        .unwrap();
+        fs::write(
+            process.join("fdinfo/4"),
+            "drm-driver:\tamdxdna_accel_driver\ndrm-client-id:\t42\ndrm-total-memory:\t100\n",
+        )
+        .unwrap();
+        fs::write(
+            process.join("fdinfo/5"),
+            "drm-driver:\tamdxdna_accel_driver\ndrm-client-id:\t43\ndrm-memory-local:\t64 KiB\n",
         )
         .unwrap();
 
@@ -428,7 +510,25 @@ mod tests {
         fs::create_dir_all(no_memory.join("fd")).unwrap();
         fs::create_dir_all(no_memory.join("fdinfo")).unwrap();
         std::os::unix::fs::symlink("/dev/accel/accel0", no_memory.join("fd/3")).unwrap();
-        fs::write(no_memory.join("fdinfo/3"), "drm-driver:\tamdxdna\n").unwrap();
+        fs::write(
+            no_memory.join("fdinfo/3"),
+            "drm-driver:\tamdxdna_accel_driver\ndrm-client-id:\t44\n",
+        )
+        .unwrap();
+
+        let other_driver = proc_root.path().join("125");
+        fs::create_dir_all(other_driver.join("fd")).unwrap();
+        fs::create_dir_all(other_driver.join("fdinfo")).unwrap();
+        std::os::unix::fs::symlink("/dev/accel/accel0", other_driver.join("fd/3")).unwrap();
+        fs::write(
+            other_driver.join("fdinfo/3"),
+            "drm-driver:\tamdgpu\ndrm-client-id:\t45\ndrm-total-memory:\t999 MiB\n",
+        )
+        .unwrap();
+
+        let unreadable = proc_root.path().join("126");
+        fs::create_dir_all(&unreadable).unwrap();
+        fs::write(unreadable.join("fd"), "not-a-directory").unwrap();
 
         let reader = AmdXdnaNpuReader::with_paths(
             class.path().to_path_buf(),
@@ -438,9 +538,8 @@ mod tests {
         assert_eq!(clients.len(), 1);
         assert_eq!(clients[0].pid, 123);
         assert_eq!(clients[0].device_uuid, "AMD-XDNA-0000:c3:00.1");
-        assert_eq!(clients[0].used_memory, 64 * 1024);
+        assert_eq!(clients[0].used_memory, 100 + 64 * 1024);
         assert_eq!(clients[0].process_name, "python-worker");
-        assert_eq!(clients[0].command, "python-worker");
         assert_eq!(clients[0].memory_rss, 8 * 1024);
     }
 

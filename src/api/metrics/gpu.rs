@@ -110,7 +110,7 @@ impl<'a> GpuMetricExporter<'a> {
         // counter from a real zero mark it explicitly in `detail`.
         if info
             .detail
-            .get("memory_status")
+            .get(detail_keys::MEMORY_STATUS_DETAIL_KEY)
             .is_none_or(|status| status != "unavailable")
         {
             builder
@@ -1260,8 +1260,10 @@ mod tests {
         gpu.device_type = "NPU".to_string();
         gpu.used_memory = 0;
         gpu.total_memory = 0;
-        gpu.detail
-            .insert("memory_status".to_string(), "unavailable".to_string());
+        gpu.detail.insert(
+            detail_keys::MEMORY_STATUS_DETAIL_KEY.to_string(),
+            "unavailable".to_string(),
+        );
 
         let output = GpuMetricExporter::new(&[gpu]).export_metrics();
         assert!(
