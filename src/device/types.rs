@@ -741,8 +741,10 @@ pub struct MemoryInfo {
     pub time: String,          // Timestamp
 }
 
-/// Chassis/Node-level information for system-wide metrics
-/// This provides visibility into total power consumption, thermal data, and BMC information
+/// Chassis/node-level information for system-wide metrics. When no platform
+/// source reports total power, a sum of available discrete GPU device-power
+/// readings may be used as an estimate. GPU rows carrying the whole-APU socket
+/// power detail marker are excluded from that fallback.
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ChassisInfo {
     pub host_id: String,  // Host identifier (e.g., "10.82.128.41:9090")
@@ -750,7 +752,7 @@ pub struct ChassisInfo {
     pub instance: String, // Instance name from metrics
 
     // Power
-    pub total_power_watts: Option<f64>, // Combined power consumption (CPU+GPU+ANE)
+    pub total_power_watts: Option<f64>, // Platform power or discrete-GPU sum estimate
 
     // Thermal (BMC)
     pub inlet_temperature: Option<f64>, // Inlet temperature (if available)

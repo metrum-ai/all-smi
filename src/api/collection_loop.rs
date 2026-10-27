@@ -24,7 +24,7 @@ use crate::api::FrameBus;
 use crate::api::handlers::SharedState;
 use crate::app_state::AppState;
 use crate::device::{
-    ChassisInfo, CpuInfo, GpuInfo, MemoryInfo, ProcessInfo, create_chassis_reader, get_cpu_readers,
+    CpuInfo, GpuInfo, MemoryInfo, ProcessInfo, create_chassis_reader, get_cpu_readers,
     get_gpu_readers, get_memory_readers,
 };
 use crate::snapshot::{SNAPSHOT_SCHEMA_VERSION, Snapshot};
@@ -95,22 +95,12 @@ pub async fn run_collection_loop(
             Vec::new()
         };
 
-        // Collect chassis-level info (DMI, thermals, power).
-        let chassis_info: Vec<ChassisInfo> = chassis_reader
-            .get_chassis_info()
-            .into_iter()
-            .map(|mut ci| {
-                // Aggregate GPU power into chassis total if not already set.
-                if ci.total_power_watts.is_none() {
-                    let total_gpu_power =
-                        crate::metrics::gpu_readings::total_power_watts(&all_gpu_info);
-                    if total_gpu_power > 0.0 {
-                        ci.total_power_watts = Some(total_gpu_power);
-                    }
-                }
-                ci
-            })
-            .collect();
+        // Preserve the discrete-device fallback while excluding APU samples
+        // that carry whole-socket rather than GFX-only power.
+        let chassis_info = crate::metrics::gpu_readings::inject_chassis_gpu_power(
+            chassis_reader.get_chassis_info().into_iter().collect(),
+            &all_gpu_info,
+        );
 
         let storage_info = disks.storage_info(&hostname);
 

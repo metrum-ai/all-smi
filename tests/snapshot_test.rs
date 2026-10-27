@@ -28,7 +28,7 @@ use std::time::Duration;
 use all_smi::cli::{SnapshotFormat, SnapshotIncludes};
 use all_smi::device::{ChassisInfo, CpuInfo, CpuPlatformType, GpuInfo, MemoryInfo, ProcessInfo};
 use all_smi::snapshot::{
-    SnapshotCollector, SnapshotHardFailure, SnapshotOptions, run_with_collector,
+    SnapshotCollector, SnapshotHardFailure, SnapshotOptions, collect_once, run_with_collector,
 };
 use all_smi::storage::info::StorageInfo;
 
@@ -219,6 +219,49 @@ async fn json_single_sample_contains_expected_schema() {
     assert!(parsed.get("processes").is_none());
     assert!(parsed.get("storage").is_none());
     let _ = fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn snapshot_uses_discrete_gpu_power_fallback() {
+    let mut gpu = mock_gpu("test-gpu", 50.0, 55);
+    gpu.power_consumption = 50.0;
+    let collector = Arc::new(MockCollector {
+        gpus: vec![gpu],
+        chassis: vec![ChassisInfo::default()],
+        ..MockCollector::empty()
+    });
+    let includes = SnapshotIncludes {
+        gpu: true,
+        chassis: true,
+        ..Default::default()
+    };
+
+    let snapshot = collect_once(collector, &includes, Duration::from_secs(1)).await;
+    let chassis = snapshot.chassis.expect("requested chassis section");
+    assert_eq!(chassis.len(), 1);
+    assert_eq!(chassis[0].total_power_watts, Some(50.0));
+}
+
+#[tokio::test]
+async fn snapshot_does_not_add_apu_socket_power_to_chassis_total() {
+    let mut gpu = mock_gpu("test-apu", 50.0, 55);
+    gpu.power_consumption = 2.0;
+    gpu.detail
+        .insert("socket_power_watts".to_string(), "15.700".to_string());
+    let collector = Arc::new(MockCollector {
+        gpus: vec![gpu],
+        chassis: vec![ChassisInfo::default()],
+        ..MockCollector::empty()
+    });
+    let includes = SnapshotIncludes {
+        gpu: true,
+        chassis: true,
+        ..Default::default()
+    };
+
+    let snapshot = collect_once(collector, &includes, Duration::from_secs(1)).await;
+    let chassis = snapshot.chassis.expect("requested chassis section");
+    assert_eq!(chassis[0].total_power_watts, None);
 }
 
 #[tokio::test]

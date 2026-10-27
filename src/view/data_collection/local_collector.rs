@@ -62,27 +62,6 @@ const MAX_DISPLAY_PROCESSES: usize = 500;
 /// Every N cycles, we refresh all processes; otherwise, we only refresh tracked PIDs.
 const FULL_REFRESH_INTERVAL: u32 = 5;
 
-/// Inject aggregated GPU power into chassis info when not already set.
-///
-/// Sums only the devices that reported power. A device with no reading
-/// carries the `-1.0` sentinel, and a multi-die board (ATOM Max) reports its
-/// power on one die with the rest absent, so a raw sum would subtract one
-/// watt per silent device.
-fn inject_gpu_power(chassis_info: Vec<ChassisInfo>, gpu_info: &[GpuInfo]) -> Vec<ChassisInfo> {
-    chassis_info
-        .into_iter()
-        .map(|mut ci| {
-            if ci.total_power_watts.is_none() {
-                let total = crate::metrics::gpu_readings::total_power_watts(gpu_info);
-                if total > 0.0 {
-                    ci.total_power_watts = Some(total);
-                }
-            }
-            ci
-        })
-        .collect()
-}
-
 /// Everything the GPU reader set produces in one pass.
 ///
 /// The four GPU queries stay grouped in a single unit of work on purpose.
@@ -619,8 +598,8 @@ impl LocalCollector {
         // Reset refresh cycle counter (first iteration counts as cycle 0)
         self.refresh_cycle.store(1, Ordering::Relaxed);
 
-        // Inject aggregated GPU power into chassis info
-        let all_chassis_info = inject_gpu_power(all_chassis_info, &all_gpu_info);
+        let all_chassis_info =
+            crate::metrics::gpu_readings::inject_chassis_gpu_power(all_chassis_info, &all_gpu_info);
 
         CollectionData {
             gpu_info: all_gpu_info,
@@ -763,8 +742,8 @@ impl LocalCollector {
             .collect();
         *self.tracked_pids.write().await = new_tracked_pids;
 
-        // Inject aggregated GPU power into chassis info
-        let all_chassis_info = inject_gpu_power(all_chassis_info, &all_gpu_info);
+        let all_chassis_info =
+            crate::metrics::gpu_readings::inject_chassis_gpu_power(all_chassis_info, &all_gpu_info);
 
         CollectionData {
             gpu_info: all_gpu_info,

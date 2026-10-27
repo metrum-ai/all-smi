@@ -298,7 +298,8 @@ async fn collect_reference(collector: &LocalCollector) -> CollectionData {
         .and_then(|r| r.get_chassis_info())
         .into_iter()
         .collect();
-    let all_chassis_info = inject_gpu_power(all_chassis_info, &all_gpu_info);
+    let all_chassis_info =
+        crate::metrics::gpu_readings::inject_chassis_gpu_power(all_chassis_info, &all_gpu_info);
 
     CollectionData {
         gpu_info: all_gpu_info,
@@ -484,12 +485,16 @@ fn inject_gpu_power_skips_unavailable_rows() {
         gpu_with_power("die-1", GPU_METRIC_UNAVAILABLE),
         gpu_with_power("die-2", GPU_METRIC_UNAVAILABLE),
     ];
-    let chassis = inject_gpu_power(vec![ChassisInfo::default()], &gpus);
+    let chassis =
+        crate::metrics::gpu_readings::inject_chassis_gpu_power(vec![ChassisInfo::default()], &gpus);
     assert_eq!(chassis[0].total_power_watts, Some(300.0));
 
     // Nothing reported: stay unset instead of injecting a negative total.
     let silent = vec![gpu_with_power("die-1", GPU_METRIC_UNAVAILABLE)];
-    let chassis = inject_gpu_power(vec![ChassisInfo::default()], &silent);
+    let chassis = crate::metrics::gpu_readings::inject_chassis_gpu_power(
+        vec![ChassisInfo::default()],
+        &silent,
+    );
     assert_eq!(chassis[0].total_power_watts, None);
 
     // A chassis that already measured its own power keeps it.
@@ -497,7 +502,7 @@ fn inject_gpu_power_skips_unavailable_rows() {
         total_power_watts: Some(1200.0),
         ..ChassisInfo::default()
     };
-    let chassis = inject_gpu_power(vec![measured], &gpus);
+    let chassis = crate::metrics::gpu_readings::inject_chassis_gpu_power(vec![measured], &gpus);
     assert_eq!(chassis[0].total_power_watts, Some(1200.0));
 }
 

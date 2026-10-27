@@ -55,8 +55,9 @@ impl GenericChassisReader {
         }
     }
 
-    /// Update the cached GPU power value
-    /// This should be called from the data collection loop with aggregated GPU power
+    /// Update the cached GPU power fallback value.
+    /// Callers must pass only device-scoped GPU power; whole-APU socket power
+    /// must not be used as chassis power.
     pub fn update_gpu_power(&self, total_gpu_power_watts: f64) {
         if let Ok(mut power) = self.cached_gpu_power.write() {
             *power = Some(total_gpu_power_watts);

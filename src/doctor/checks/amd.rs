@@ -24,6 +24,8 @@ use crate::doctor::types::{Check, CheckCtx, CheckResult, Severity};
 
 static CHECKS: &[&Check] = &[
     &ROCM_VERSION,
+    &RAPL_ACCESS,
+    &UMC_BANDWIDTH,
     &LIBAMDGPU_TOP_ABI,
     &DRI_PERMS,
     &BUILD_GATE,
@@ -42,6 +44,20 @@ static ROCM_VERSION: Check = Check {
     title: "ROCm version",
     severity_on_fail: Severity::Warn,
     run: check_rocm,
+};
+
+static RAPL_ACCESS: Check = Check {
+    id: "amd.rapl.access",
+    title: "RAPL energy-counter access",
+    severity_on_fail: Severity::Info,
+    run: check_rapl_access,
+};
+
+static UMC_BANDWIDTH: Check = Check {
+    id: "amd.umc.bandwidth",
+    title: "System memory bandwidth access",
+    severity_on_fail: Severity::Info,
+    run: check_umc_bandwidth,
 };
 
 static LIBAMDGPU_TOP_ABI: Check = Check {
@@ -640,6 +656,99 @@ fn parse_rocminfo_hsa_version(output: &str) -> Option<String> {
     })
 }
 
+fn check_rapl_access(_ctx: &CheckCtx) -> CheckResult {
+    #[cfg(target_os = "linux")]
+    {
+        use std::fs;
+
+        let domains = fs::read_dir("/sys/class/powercap")
+            .ok()
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                let name = fs::read_to_string(entry.path().join("name")).ok()?;
+                name.trim().starts_with("package").then_some(entry.path())
+            })
+            .collect::<Vec<_>>();
+        let readable = domains
+            .iter()
+            .filter(|domain| fs::File::open(domain.join("energy_uj")).is_ok())
+            .count();
+        describe_rapl_access(domains.len(), readable)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        CheckResult::Skip("RAPL powercap access checks are Linux-only".to_string())
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn describe_rapl_access(domains: usize, readable: usize) -> CheckResult {
+    if domains == 0 {
+        return CheckResult::Skip(
+            "RAPL energy counters unavailable: no package powercap domains were detected"
+                .to_string(),
+        );
+    }
+    if readable == domains {
+        return CheckResult::Pass(format!(
+            "RAPL energy counters are readable for all {domains} detected package domain(s)"
+        ));
+    }
+
+    CheckResult::Skip(format!(
+        "RAPL energy counters unavailable to this user: {readable}/{domains} package domain(s) are readable. On stock Linux systems energy counters may be root-only; an administrator may document and opt in to read access for a dedicated group, with the power side-channel risk noted. all-smi does not change host permissions or install access rules"
+    ))
+}
+
+fn check_umc_bandwidth(_ctx: &CheckCtx) -> CheckResult {
+    #[cfg(target_os = "linux")]
+    {
+        use std::fs;
+
+        let umc_count = fs::read_dir("/sys/bus/event_source/devices")
+            .ok()
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                name.strip_prefix("amd_umc_").is_some_and(|suffix| {
+                    !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit())
+                })
+            })
+            .count();
+        let paranoid = fs::read_to_string("/proc/sys/kernel/perf_event_paranoid")
+            .ok()
+            .and_then(|value| value.trim().parse::<i32>().ok());
+        describe_umc_bandwidth_availability(umc_count, paranoid)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        CheckResult::Skip("AMD UMC system-memory bandwidth checks are Linux-only".to_string())
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn describe_umc_bandwidth_availability(umc_count: usize, paranoid: Option<i32>) -> CheckResult {
+    if umc_count == 0 {
+        return CheckResult::Skip(
+            "System memory bandwidth unavailable: no amd_umc memory-controller PMUs were detected"
+                .to_string(),
+        );
+    }
+
+    let policy = paranoid.map_or_else(
+        || "kernel.perf_event_paranoid could not be read".to_string(),
+        |value| format!("kernel.perf_event_paranoid is {value}"),
+    );
+    CheckResult::Skip(format!(
+        "System memory bandwidth unavailable: detected {umc_count} amd_umc PMUs, but this build does not sample their system-wide perf counters; access to these counters requires CAP_PERFMON or an administrator-managed perf policy ({policy}). all-smi does not change kernel policy or request capabilities"
+    ))
+}
+
 fn check_rocm(_ctx: &CheckCtx) -> CheckResult {
     #[cfg(target_os = "linux")]
     {
@@ -774,7 +883,7 @@ fn check_build_gate(_ctx: &CheckCtx) -> CheckResult {
 
 #[cfg(test)]
 mod tests {
-    use super::per_card_verdict;
+    use super::{describe_rapl_access, describe_umc_bandwidth_availability, per_card_verdict};
     #[cfg(target_os = "linux")]
     use super::{
         has_rocm_userspace_marker, parse_amd_smi_rocm_version, parse_rocm_version_header,
@@ -876,6 +985,50 @@ mod tests {
     fn absent_rocm_root_has_no_detected_version() {
         let root = tempfile::tempdir().expect("temporary ROCm root");
         assert_eq!(rocm_version_from_root(root.path()), None);
+    }
+
+    #[test]
+    fn rapl_access_is_cleanly_unavailable_without_package_domains() {
+        let result = describe_rapl_access(0, 0);
+        assert_eq!(result.tag(), "SKIP");
+        assert!(result.message().contains("no package powercap domains"));
+    }
+
+    #[test]
+    fn rapl_access_explains_admin_opt_in_without_changing_host_permissions() {
+        let result = describe_rapl_access(1, 0);
+        assert_eq!(result.tag(), "SKIP");
+        assert!(result.message().contains("dedicated group"));
+        assert!(result.message().contains("side-channel"));
+        assert!(
+            result
+                .message()
+                .contains("does not change host permissions")
+        );
+    }
+
+    #[test]
+    fn rapl_access_passes_when_all_package_energy_files_are_readable() {
+        let result = describe_rapl_access(2, 2);
+        assert_eq!(result.tag(), "PASS");
+        assert!(result.message().contains("all 2"));
+    }
+
+    #[test]
+    fn umc_bandwidth_is_explicitly_unavailable_without_a_controller_pmu() {
+        let result = describe_umc_bandwidth_availability(0, Some(3));
+        assert_eq!(result.tag(), "SKIP");
+        assert!(result.message().contains("no amd_umc"));
+    }
+
+    #[test]
+    fn umc_bandwidth_explains_perf_access_without_changing_policy() {
+        let result = describe_umc_bandwidth_availability(16, Some(3));
+        assert_eq!(result.tag(), "SKIP");
+        assert!(result.message().contains("16 amd_umc PMUs"));
+        assert!(result.message().contains("CAP_PERFMON"));
+        assert!(result.message().contains("perf_event_paranoid is 3"));
+        assert!(result.message().contains("does not change kernel policy"));
     }
 
     fn readout(power_w: f64) -> Option<String> {

@@ -32,7 +32,7 @@
 //! Every function here treats "nobody reported" as `None` (or `0.0` for the
 //! sums, where an empty sum genuinely is zero) rather than inventing a value.
 
-use crate::device::GpuInfo;
+use crate::device::{ChassisInfo, GpuInfo};
 
 /// Sum of the GPU power readings that are actually present, in watts.
 ///
@@ -44,6 +44,45 @@ pub fn total_power_watts(gpus: &[GpuInfo]) -> f64 {
     gpus.iter()
         .filter_map(GpuInfo::power_consumption_reading)
         .sum()
+}
+
+/// Power that can safely serve as a chassis fallback, or `None` when no
+/// device-domain reading is available. APU socket-power fallback samples are
+/// excluded: they already describe the whole SoC and must not be added to
+/// discrete-device power or relabeled as a chassis total. Any row carrying the
+/// APU socket-power detail marker is excluded, including a GFX-only reading.
+pub fn chassis_power_watts(gpus: &[GpuInfo]) -> Option<f64> {
+    let total: f64 = gpus
+        .iter()
+        .filter(|gpu| {
+            !gpu.detail
+                .contains_key(crate::device::readers::detail_keys::SOCKET_POWER_WATTS_DETAIL_KEY)
+        })
+        .filter_map(GpuInfo::power_consumption_reading)
+        .sum();
+    (total > 0.0).then_some(total)
+}
+
+/// Add a GPU-sum fallback to chassis rows that have no platform reading.
+/// APU rows carrying the socket-power detail marker are excluded by
+/// [`chassis_power_watts`], while unavailable multi-die rows are skipped by
+/// [`GpuInfo::power_consumption_reading`].
+pub fn inject_chassis_gpu_power(
+    chassis_info: Vec<ChassisInfo>,
+    gpu_info: &[GpuInfo],
+) -> Vec<ChassisInfo> {
+    let Some(total) = chassis_power_watts(gpu_info) else {
+        return chassis_info;
+    };
+    chassis_info
+        .into_iter()
+        .map(|mut chassis| {
+            if chassis.total_power_watts.is_none() {
+                chassis.total_power_watts = Some(total);
+            }
+            chassis
+        })
+        .collect()
 }
 
 /// Mean power in watts across the GPUs that reported a power reading, or
@@ -240,6 +279,42 @@ mod tests {
         assert_eq!(mean_power_watts(&[card(0.0), card(10.0)]), Some(5.0));
         // Nobody reported: no mean, not 0 W.
         assert_eq!(mean_power_watts(&[unavailable(), unavailable()]), None);
+    }
+
+    #[test]
+    fn chassis_fallback_skips_socket_power_but_keeps_discrete_power() {
+        let mut apu = gpu(0.0, 40, 15.7);
+        apu.detail
+            .insert("socket_power_watts".to_string(), "15.700".to_string());
+        assert_eq!(chassis_power_watts(std::slice::from_ref(&apu)), None);
+
+        let discrete = gpu(0.0, 40, 120.0);
+        assert_eq!(
+            chassis_power_watts(&[apu.clone(), discrete, unavailable()]),
+            Some(120.0)
+        );
+
+        // A GFX-only value still carries the APU socket-domain marker and is
+        // excluded from the chassis fallback by design.
+        apu.power_consumption = 2.0;
+        assert_eq!(chassis_power_watts(&[apu]), None);
+    }
+
+    #[test]
+    fn inject_chassis_gpu_power_preserves_platform_power_and_skips_apu_socket() {
+        let mut apu = gpu(0.0, 40, 15.7);
+        apu.detail
+            .insert("socket_power_watts".to_string(), "15.700".to_string());
+        let no_fallback = inject_chassis_gpu_power(vec![ChassisInfo::default()], &[apu]);
+        assert_eq!(no_fallback[0].total_power_watts, None);
+
+        let discrete = gpu(0.0, 40, 120.0);
+        let measured = ChassisInfo {
+            total_power_watts: Some(900.0),
+            ..ChassisInfo::default()
+        };
+        let preserved = inject_chassis_gpu_power(vec![measured], &[discrete]);
+        assert_eq!(preserved[0].total_power_watts, Some(900.0));
     }
 
     #[test]
