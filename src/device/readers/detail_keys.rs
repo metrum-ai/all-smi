@@ -230,6 +230,20 @@ pub const ENGINE_DETAIL_KEY_PREFIX: &str = "Engine: ";
 /// touching.
 pub const FREQUENCY_DOMAIN_DETAIL_KEY_PREFIX: &str = "Frequency: ";
 
+/// Reserved prefix for time-filtered average clock domains from AMD APU `gpu_metrics` v3.
+pub const AVERAGE_FREQUENCY_DOMAIN_DETAIL_KEY_PREFIX: &str = "Average frequency: ";
+
+/// Prefix for raw APU throttle-residency counters from `gpu_metrics` v3.
+/// Their unit is not documented by the kernel ABI, so consumers must not
+/// label them as seconds or percentages.
+pub const THROTTLE_RESIDENCY_RAW_DETAIL_KEY_PREFIX: &str = "Throttle residency raw: ";
+/// Prefixes for active pp_dpm level and range details, keyed by clock domain.
+pub const DPM_CLOCK_LEVEL_DETAIL_KEY_PREFIX: &str = "DPM level: ";
+pub const DPM_CLOCK_MIN_MHZ_DETAIL_KEY_PREFIX: &str = "DPM min MHz: ";
+pub const DPM_CLOCK_MAX_MHZ_DETAIL_KEY_PREFIX: &str = "DPM max MHz: ";
+pub const AMD_PERFORMANCE_LEVEL_DETAIL_KEY: &str = "amd_performance_level";
+pub const AMD_POWER_PROFILE_DETAIL_KEY: &str = "amd_power_profile";
+
 /// Key prefixes whose runtime-built key families are continuously varying
 /// measurements, and which therefore must not become labels on
 /// `all_smi_gpu_info`.
@@ -250,11 +264,20 @@ pub const FREQUENCY_DOMAIN_DETAIL_KEY_PREFIX: &str = "Frequency: ";
 /// * `Engine: ` (Intel sysfs and Level Zero, Linux and Windows alike):
 ///   `all_smi_gpu_engine_utilization`, one row per engine class, keyed by
 ///   the `engine` label carrying the class name.
-/// * `Frequency: ` (Intel Level Zero):
+/// * `Frequency: ` (Intel Level Zero and AMD sysfs):
 ///   `all_smi_gpu_clock_domain_current_mhz`, one row per clock domain,
 ///   keyed by the `domain` label carrying the domain name.
-pub const VOLATILE_DETAIL_KEY_PREFIXES: &[&str] =
-    &[ENGINE_DETAIL_KEY_PREFIX, FREQUENCY_DOMAIN_DETAIL_KEY_PREFIX];
+/// * `Average frequency: ` (AMD APU `gpu_metrics` v3):
+///   `all_smi_gpu_clock_domain_average_mhz`, one row per average clock domain.
+pub const VOLATILE_DETAIL_KEY_PREFIXES: &[&str] = &[
+    ENGINE_DETAIL_KEY_PREFIX,
+    FREQUENCY_DOMAIN_DETAIL_KEY_PREFIX,
+    AVERAGE_FREQUENCY_DOMAIN_DETAIL_KEY_PREFIX,
+    THROTTLE_RESIDENCY_RAW_DETAIL_KEY_PREFIX,
+    DPM_CLOCK_LEVEL_DETAIL_KEY_PREFIX,
+    DPM_CLOCK_MIN_MHZ_DETAIL_KEY_PREFIX,
+    DPM_CLOCK_MAX_MHZ_DETAIL_KEY_PREFIX,
+];
 
 /// Detail keys whose value is a continuously varying measurement, and which
 /// therefore must not become labels on `all_smi_gpu_info`.
@@ -421,6 +444,8 @@ pub const VOLATILE_DETAIL_KEYS: &[&str] = &[
     HOTSPOT_TEMPERATURE_DETAIL_KEY,
     MEMORY_TEMPERATURE_DETAIL_KEY,
     MEMORY_CONTROLLER_ACTIVITY_DETAIL_KEY,
+    AMD_PERFORMANCE_LEVEL_DETAIL_KEY,
+    AMD_POWER_PROFILE_DETAIL_KEY,
     VRAM_USAGE_PROCESS_DETAIL_KEY,
     VRAM_BUDGET_PROCESS_DETAIL_KEY,
     "Power (L0)",

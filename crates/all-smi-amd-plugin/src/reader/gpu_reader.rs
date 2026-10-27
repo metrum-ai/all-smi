@@ -126,9 +126,13 @@ impl GpuReader for AmdGpuReader {
 
             // Try to get metrics from GpuMetrics first with validation
             if let Ok(metrics) = GpuMetrics::get_from_sysfs_path(&device.device_path.sysfs_path) {
-                if let Some(gfx_activity) = metrics.get_average_gfx_activity() {
-                    // Validate utilization is within reasonable bounds
-                    utilization = (gfx_activity as f64).clamp(0.0, MAX_GPU_UTILIZATION);
+                if let Some(gfx_activity) = metrics
+                    .get_average_gfx_activity()
+                    .and_then(valid_metrics_percent)
+                {
+                    // Reject the u16::MAX unsupported sentinel and values
+                    // outside the utilization percentage domain.
+                    utilization = gfx_activity.clamp(0.0, MAX_GPU_UTILIZATION);
                 }
                 // v1.4 / v1.5 tables carry `curr_socket_power` and no
                 // average; every other table carries the average only.
@@ -167,20 +171,52 @@ impl GpuReader for AmdGpuReader {
                                 total.to_string(),
                             );
                         }
+                        if header.format_revision == 3 {
+                            read_cached_apu_sysfs_details(
+                                &device.device_path.sysfs_path,
+                                &device.apu_sysfs_details,
+                                &mut detail,
+                            );
+                            insert_apu_metric_details(
+                                &mut detail,
+                                &[
+                                    ("GFX", metrics.get_average_gfxclk_frequency()),
+                                    ("SOC", metrics.get_average_socclk_frequency()),
+                                    ("UCLK", metrics.get_average_uclk_frequency()),
+                                    ("FCLK", metrics.get_average_fclk_frequency()),
+                                    ("VCLK", metrics.get_average_vclk_frequency()),
+                                    ("VPECLK", metrics.get_average_vpeclk_frequency()),
+                                    ("IPUCLK", metrics.get_average_ipuclk_frequency()),
+                                    ("MPIPU", metrics.get_average_mpipu_frequency()),
+                                ],
+                                vcn_activity_percent(
+                                    metrics.get_average_mm_activity(),
+                                    &device.device_path.sysfs_path,
+                                ),
+                                &[
+                                    ("prochot", metrics.get_throttle_residency_prochot()),
+                                    ("spl", metrics.get_throttle_residency_spl()),
+                                    ("fppt", metrics.get_throttle_residency_fppt()),
+                                    ("sppt", metrics.get_throttle_residency_sppt()),
+                                    ("thermal_core", metrics.get_throttle_residency_thm_core()),
+                                    ("thermal_gfx", metrics.get_throttle_residency_thm_gfx()),
+                                    ("thermal_soc", metrics.get_throttle_residency_thm_soc()),
+                                ],
+                            );
+                        }
                     }
                 }
                 // GPU metrics v3 exposes time-filtered system DRAM read/write
-                // bandwidth in decimal MB/s. Keep these SoC memory-domain
-                // readings separate from GFX activity and from UMC PMU data.
-                if let (Some(reads_mb_s), Some(writes_mb_s)) = (
-                    metrics.get_average_dram_reads(),
-                    metrics.get_average_dram_writes(),
-                ) {
+                // bandwidth in decimal MB/s. Omit unsupported sentinels
+                // independently, rather than publish them as measurements.
+                if let Some(reads_mb_s) = metrics.get_average_dram_reads().and_then(valid_metrics_u16) {
                     detail.insert(
                         all_smi::device::readers::detail_keys::SYSTEM_DRAM_READ_BYTES_PER_SECOND_DETAIL_KEY
                             .to_string(),
                         dram_bandwidth_mb_s_to_bytes_per_second(reads_mb_s).to_string(),
                     );
+                }
+                if let Some(writes_mb_s) = metrics.get_average_dram_writes().and_then(valid_metrics_u16) {
                     detail.insert(
                         all_smi::device::readers::detail_keys::SYSTEM_DRAM_WRITE_BYTES_PER_SECOND_DETAIL_KEY
                             .to_string(),
@@ -188,13 +224,19 @@ impl GpuReader for AmdGpuReader {
                     );
                 }
 
-                if let Some(temp) = metrics.get_temperature_edge() {
-                    // Validate temperature
-                    temperature = (temp as u32).min(MAX_GPU_TEMP_CELSIUS);
+                if let Some(temp) = metrics
+                    .get_temperature_edge()
+                    .and_then(valid_metrics_u16)
+                {
+                    // Validate temperature after rejecting the unsupported sentinel.
+                    temperature = u32::from(temp).min(MAX_GPU_TEMP_CELSIUS);
                 }
-                if let Some(freq) = metrics.get_current_gfxclk() {
-                    // Validate frequency
-                    frequency = (freq as u32).min(MAX_GPU_FREQ_MHZ);
+                if let Some(freq) = metrics
+                    .get_current_gfxclk()
+                    .and_then(valid_metrics_u16)
+                {
+                    // Validate frequency after rejecting the unsupported sentinel.
+                    frequency = u32::from(freq).min(MAX_GPU_FREQ_MHZ);
                 }
             }
 

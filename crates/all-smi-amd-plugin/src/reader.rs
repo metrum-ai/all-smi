@@ -22,6 +22,7 @@ use libamdgpu_top::stat::{self, FdInfoStat, ProcInfo};
 use libamdgpu_top::{AppDeviceInfo, DevicePath, VramUsage};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 // GPU metric validation constants
 const MAX_GPU_UTILIZATION: f64 = 100.0; // Maximum utilization percentage
@@ -47,6 +48,14 @@ fn clamp_fan_rpm(rpm: Option<u32>) -> Option<u32> {
 /// Convert the `gpu_metrics` DRAM bandwidth field (decimal MB/s) to bytes/s.
 fn dram_bandwidth_mb_s_to_bytes_per_second(value: u16) -> u64 {
     u64::from(value) * 1_000_000
+}
+
+fn valid_metrics_percent(value: u16) -> Option<f64> {
+    (value <= 100).then(|| f64::from(value))
+}
+
+fn valid_metrics_u16(value: u16) -> Option<u16> {
+    (value != u16::MAX).then_some(value)
 }
 
 /// Convert a `gpu_metrics` socket power reading to watts.
@@ -92,6 +101,236 @@ fn read_gtt_memory_bytes(sysfs_path: &std::path::Path) -> Option<(u64, u64)> {
         .parse::<u64>()
         .ok()?;
     (used <= total).then_some((used, total))
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct DpmClockInfo {
+    min_mhz: u32,
+    max_mhz: u32,
+    current_level: Option<u32>,
+    current_mhz: Option<u32>,
+}
+
+fn parse_pp_dpm_clock_levels(contents: &str, sclk: bool) -> Option<DpmClockInfo> {
+    let mut levels = Vec::new();
+    for line in contents.lines() {
+        let Some((index, rest)) = line.split_once(':') else {
+            continue;
+        };
+        let Ok(index) = index.trim().parse::<u32>() else {
+            continue;
+        };
+        let mut mhz = None;
+        for token in rest.split_whitespace() {
+            let token = token.trim_matches(|ch: char| !ch.is_ascii_alphanumeric());
+            let Some((digits, unit)) = token.split_at_checked(token.len().saturating_sub(3)) else {
+                continue;
+            };
+            if !unit.eq_ignore_ascii_case("mhz") {
+                continue;
+            }
+            if let Ok(value) = digits.parse::<u32>() {
+                mhz = Some(value);
+                break;
+            }
+        }
+        let Some(mhz) = mhz else {
+            continue;
+        };
+        let current = rest.contains('*');
+        let range_marker = rest
+            .split_whitespace()
+            .any(|word| matches!(word.to_ascii_lowercase().as_str(), "min" | "max"));
+        levels.push((index, mhz, current, range_marker));
+    }
+    // SMU v14 SCLK reports unlabeled 0=min, 1=current (or a fallback
+    // value), 2=max. The same shape can also be a genuine three-level
+    // table, so omit its ambiguous level rather than report a false index.
+    let sclk_three_rows = sclk && levels.len() == 3 && levels.iter().map(|row| row.0).eq([0, 1, 2]);
+    let min_mhz = if sclk_three_rows {
+        levels[0].1
+    } else {
+        levels.iter().map(|(_, mhz, _, _)| *mhz).min()?
+    };
+    let max_mhz = if sclk_three_rows {
+        levels[2].1
+    } else {
+        levels.iter().map(|(_, mhz, _, _)| *mhz).max()?
+    };
+    let current = levels.iter().find(|(_, _, current, _)| *current);
+    let has_min_max_rows = sclk_three_rows || levels.iter().any(|(_, _, _, marked)| *marked);
+    Some(DpmClockInfo {
+        min_mhz,
+        max_mhz,
+        // On SMU v14, min/current/max are synthetic row labels, not table
+        // indices. Keep the current frequency but do not expose that row's
+        // ordinal as a DPM level.
+        current_level: (!has_min_max_rows)
+            .then(|| current.map(|(index, _, _, _)| *index))
+            .flatten(),
+        current_mhz: current.map(|(_, mhz, _, _)| *mhz),
+    })
+}
+
+fn active_power_profile(contents: &str) -> Option<String> {
+    for line in contents.lines().filter(|line| line.contains('*')) {
+        // Kernel variants use either `1 NAME*`, `1 NAME*:`, or `1: NAME *:`.
+        // The non-numeric `S:` status line is intentionally ignored.
+        let line = line.trim();
+        let parsed = match line.split_once(':') {
+            Some((prefix, rest)) if prefix.trim().parse::<u32>().is_ok() => {
+                Some((prefix.trim(), rest.trim()))
+            }
+            _ => line
+                .split_once(char::is_whitespace)
+                .map(|(index, rest)| (index.trim(), rest.trim())),
+        };
+        let Some((index_token, rest)) = parsed else {
+            continue;
+        };
+        let Ok(index) = index_token.parse::<u32>() else {
+            continue;
+        };
+        let name = rest
+            .split('*')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .trim_end_matches(':')
+            .trim();
+        if !name.is_empty() {
+            return Some(format!("{index}:{name}"));
+        }
+    }
+    None
+}
+
+fn read_vcn_busy_percent(sysfs_path: &std::path::Path) -> Option<u16> {
+    let busy = std::fs::read_to_string(sysfs_path.join("vcn_busy_percent"))
+        .ok()?
+        .trim()
+        .parse::<u16>()
+        .ok()?;
+    (busy <= 100).then_some(busy)
+}
+
+fn vcn_activity_percent(metrics_value: Option<u16>, sysfs_path: &std::path::Path) -> Option<u16> {
+    metrics_value
+        .filter(|activity| *activity <= 100)
+        .or_else(|| read_vcn_busy_percent(sysfs_path))
+}
+
+fn read_apu_sysfs_details(sysfs_path: &std::path::Path, detail: &mut HashMap<String, String>) {
+    use all_smi::device::readers::detail_keys as keys;
+    for (file, domain) in [
+        ("pp_dpm_sclk", "SCLK"),
+        ("pp_dpm_mclk", "MCLK"),
+        ("pp_dpm_fclk", "FCLK"),
+        ("pp_dpm_socclk", "SOCCLK"),
+    ] {
+        let Ok(contents) = std::fs::read_to_string(sysfs_path.join(file)) else {
+            continue;
+        };
+        let Some(clock) = parse_pp_dpm_clock_levels(&contents, file == "pp_dpm_sclk") else {
+            continue;
+        };
+        detail.insert(
+            format!("{}{}", keys::DPM_CLOCK_MIN_MHZ_DETAIL_KEY_PREFIX, domain),
+            clock.min_mhz.to_string(),
+        );
+        detail.insert(
+            format!("{}{}", keys::DPM_CLOCK_MAX_MHZ_DETAIL_KEY_PREFIX, domain),
+            clock.max_mhz.to_string(),
+        );
+        if let Some(level) = clock.current_level {
+            detail.insert(
+                format!("{}{}", keys::DPM_CLOCK_LEVEL_DETAIL_KEY_PREFIX, domain),
+                level.to_string(),
+            );
+        }
+        if let Some(mhz) = clock.current_mhz {
+            detail.insert(format!("Frequency: {domain} (DPM)"), mhz.to_string());
+        }
+    }
+    if let Ok(level) = std::fs::read_to_string(sysfs_path.join("power_dpm_force_performance_level"))
+    {
+        let level = level.trim();
+        if !level.is_empty() {
+            detail.insert(
+                keys::AMD_PERFORMANCE_LEVEL_DETAIL_KEY.to_string(),
+                level.to_string(),
+            );
+        }
+    }
+    if let Ok(profile) = std::fs::read_to_string(sysfs_path.join("pp_power_profile_mode"))
+        && let Some(profile) = active_power_profile(&profile)
+    {
+        detail.insert(keys::AMD_POWER_PROFILE_DETAIL_KEY.to_string(), profile);
+    }
+}
+
+const APU_SYSFS_DETAILS_CACHE_TTL: Duration = Duration::from_secs(10);
+type ApuSysfsDetailsCache = Mutex<Option<(Instant, HashMap<String, String>)>>;
+
+fn read_cached_apu_sysfs_details(
+    sysfs_path: &std::path::Path,
+    cache: &ApuSysfsDetailsCache,
+    detail: &mut HashMap<String, String>,
+) {
+    read_cached_apu_sysfs_details_at(sysfs_path, cache, detail, Instant::now());
+}
+
+fn read_cached_apu_sysfs_details_at(
+    sysfs_path: &std::path::Path,
+    cache: &ApuSysfsDetailsCache,
+    detail: &mut HashMap<String, String>,
+    now: Instant,
+) {
+    let mut cache = cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if cache.as_ref().is_none_or(|(fetched_at, _)| {
+        now.saturating_duration_since(*fetched_at) >= APU_SYSFS_DETAILS_CACHE_TTL
+    }) {
+        let mut fresh = HashMap::new();
+        read_apu_sysfs_details(sysfs_path, &mut fresh);
+        *cache = Some((now, fresh));
+    }
+    if let Some((_, cached)) = cache.as_ref() {
+        detail.extend(cached.clone());
+    }
+}
+
+fn insert_apu_metric_details(
+    detail: &mut HashMap<String, String>,
+    clocks_mhz: &[(&str, Option<u16>)],
+    vcn_activity: Option<u16>,
+    throttle_residency: &[(&str, Option<u32>)],
+) {
+    for (domain, frequency_mhz) in clocks_mhz {
+        if let Some(frequency_mhz) =
+            frequency_mhz.filter(|frequency| *frequency > 0 && *frequency != u16::MAX)
+        {
+            detail.insert(
+                format!(
+                "{}{domain}",
+                all_smi::device::readers::detail_keys::AVERAGE_FREQUENCY_DOMAIN_DETAIL_KEY_PREFIX
+            ),
+                frequency_mhz.to_string(),
+            );
+        }
+    }
+    if let Some(activity) = vcn_activity.filter(|activity| *activity <= 100) {
+        detail.insert("Engine: VCN".to_string(), activity.to_string());
+    }
+    for (reason, raw_residency) in throttle_residency {
+        if let Some(raw_residency) = raw_residency.filter(|value| *value != u32::MAX) {
+            detail.insert(
+                format!("Throttle residency raw: {reason}"),
+                raw_residency.to_string(),
+            );
+        }
+    }
 }
 
 /// Convert a `libamdgpu_top` hwmon power reading to watts.
@@ -193,6 +432,7 @@ struct AmdGpuDevice {
     device_handle: DeviceHandle,
     vram_usage: Mutex<VramUsage>, // Protected by mutex for thread-safe updates
     static_info: OnceLock<DeviceStaticInfo>, // Cached static device information
+    apu_sysfs_details: ApuSysfsDetailsCache,
 }
 
 pub struct AmdGpuReader {
@@ -240,6 +480,7 @@ impl AmdGpuReader {
                                 device_handle: amdgpu_dev,
                                 vram_usage: Mutex::new(vram_usage),
                                 static_info: OnceLock::new(),
+                                apu_sysfs_details: Mutex::new(None),
                             });
                         }
                         Err(e) => {
