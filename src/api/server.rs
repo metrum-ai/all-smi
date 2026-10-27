@@ -14,6 +14,7 @@
 
 use axum::http::{HeaderName, HeaderValue, Method, header};
 use axum::{Router, routing::get};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
@@ -248,9 +249,18 @@ pub async fn run_api_mode(args: &ApiArgs, settings: &Settings) {
         .layer(build_cors_layer())
         .layer(TraceLayer::new_for_http());
 
+    // Resolve the listener address before starting any listener.
+    let configured_port = args.port.unwrap_or(9090);
+    let bind_addr = args
+        .bind
+        .as_ref()
+        .map(|address| address.to_socket_addr(configured_port))
+        .unwrap_or_else(|| SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), configured_port));
+
     // Determine which listeners to start
     #[cfg(unix)]
     {
+        let port = bind_addr.port();
         let socket_path = args.socket.as_ref().map(|s| {
             if s.is_empty() {
                 get_default_socket_path()
@@ -259,11 +269,10 @@ pub async fn run_api_mode(args: &ApiArgs, settings: &Settings) {
             }
         });
 
-        let port = args.port.unwrap_or(9090);
         match (port, socket_path) {
             // Both TCP and UDS (port > 0 with socket)
             (1..=u16::MAX, Some(path)) => {
-                run_dual_listeners(app, port, path).await;
+                run_dual_listeners(app, bind_addr, path).await;
             }
             // UDS only (port == 0 with socket)
             (0, Some(path)) => {
@@ -271,9 +280,13 @@ pub async fn run_api_mode(args: &ApiArgs, settings: &Settings) {
             }
             // TCP only (port > 0, no socket)
             (1..=u16::MAX, None) => {
-                run_tcp_listener(app, port).await;
+                run_tcp_listener(app, bind_addr).await;
             }
-            // No listeners - error (port == 0, no socket)
+            // An explicit bind address with port 0 requests an ephemeral TCP port.
+            (0, None) if args.bind.is_some() => {
+                run_tcp_listener(app, bind_addr).await;
+            }
+            // No listeners - error (port == 0, no socket, no explicit bind)
             (0, None) => {
                 tracing::error!(
                     "No listeners configured. Use --port or --socket to specify a listener."
@@ -287,7 +300,7 @@ pub async fn run_api_mode(args: &ApiArgs, settings: &Settings) {
 
     #[cfg(not(unix))]
     {
-        run_tcp_listener(app, args.port.unwrap_or(9090)).await;
+        run_tcp_listener(app, bind_addr).await;
     }
 
     // Signal the WAL flush task to perform a final flush and fsync
@@ -300,12 +313,12 @@ pub async fn run_api_mode(args: &ApiArgs, settings: &Settings) {
 }
 
 /// Run only the TCP listener
-async fn run_tcp_listener(app: Router, port: u16) {
-    let listener = match TcpListener::bind(&format!("0.0.0.0:{port}")).await {
+async fn run_tcp_listener(app: Router, bind_addr: SocketAddr) {
+    let listener = match TcpListener::bind(bind_addr).await {
         Ok(l) => l,
         Err(e) => {
-            tracing::error!("Failed to bind TCP listener on port {port}: {e}");
-            eprintln!("Error: Failed to bind TCP listener on port {port}: {e}");
+            tracing::error!("Failed to bind TCP listener on {bind_addr}: {e}");
+            eprintln!("Error: Failed to bind TCP listener on {bind_addr}: {e}");
             return;
         }
     };
@@ -383,7 +396,7 @@ async fn run_unix_listener(app: Router, path: PathBuf) {
 
 /// Run both TCP and Unix Domain Socket listeners simultaneously
 #[cfg(unix)]
-async fn run_dual_listeners(app: Router, port: u16, socket_path: PathBuf) {
+async fn run_dual_listeners(app: Router, bind_addr: SocketAddr, socket_path: PathBuf) {
     // Remove stale socket file if it exists
     if let Err(e) = remove_stale_socket(&socket_path) {
         tracing::warn!("Failed to remove stale socket file: {e}");
@@ -406,11 +419,11 @@ async fn run_dual_listeners(app: Router, port: u16, socket_path: PathBuf) {
     }
 
     // Create TCP listener
-    let tcp_listener = match TcpListener::bind(&format!("0.0.0.0:{port}")).await {
+    let tcp_listener = match TcpListener::bind(bind_addr).await {
         Ok(l) => l,
         Err(e) => {
-            tracing::error!("Failed to bind TCP listener on port {port}: {e}");
-            eprintln!("Error: Failed to bind TCP listener on port {port}: {e}");
+            tracing::error!("Failed to bind TCP listener on {bind_addr}: {e}");
+            eprintln!("Error: Failed to bind TCP listener on {bind_addr}: {e}");
             return;
         }
     };

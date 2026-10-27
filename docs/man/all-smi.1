@@ -121,6 +121,9 @@ Hide storage rows in the TUI while continuing to collect storage data. This also
 .B \-p, \-\-port \fIPORT\fR
 The port to listen on for the API server (default: 9090). Use 0 to disable TCP listener when using Unix socket.
 .TP
+.B \-\-bind \fIADDRESS\fR, \-\-listen \fIADDRESS\fR
+IP address or IP:port to bind the TCP listener to (default: 0.0.0.0). When IP:port is supplied, its port overrides --port. Use 127.0.0.1 or ::1 for loopback-only access.
+.TP
 .B \-i, \-\-interval \fISECONDS\fR
 The interval in seconds at which to update the hardware information (default: 3)
 .TP
@@ -567,6 +570,9 @@ Start API server on default port 9090:
 .TP
 Start API server on custom port with 5-second interval:
 .B all-smi api --port 8080 --interval 5
+.TP
+Start a loopback-only API listener on a shared host:
+.B all-smi api --bind 127.0.0.1 --port 9090
 .TP
 Start API server with Unix socket (default path):
 .B all-smi api --socket

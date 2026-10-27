@@ -271,6 +271,7 @@ fn load_settings() -> Result<Settings, String> {
 fn api_args(settings: &Settings) -> ApiArgs {
     ApiArgs {
         port: Some(settings.api.port),
+        bind: None,
         interval: Some(settings.api.interval_secs),
         processes: Some(settings.api.processes),
     }

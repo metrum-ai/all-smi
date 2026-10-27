@@ -39,6 +39,22 @@ false positives, and deterministic selection.
 On a Strix Halo (Radeon 8060S) test system with ROCm 10.0, the doctor check
 reported version `10.0.0` from installed version metadata.
 
+## Issue #30 — API bind address (Metrum AI, in progress)
+
+The API accepts `--bind` (alias `--listen`) with IPv4/IPv6 literals or socket
+addresses. The default remains `0.0.0.0`; `--port` is retained, and an explicit
+port embedded in the bind socket address takes precedence. Invalid addresses
+are rejected by CLI parsing before collection starts. The TCP listener uses
+the selected address in TCP-only and TCP-plus-Unix-socket modes. CLI parsing,
+IPv4/IPv6 resolution, invalid-input rejection, and loopback port-zero binding
+are covered by tests.
+
+On Strix Halo, an idle API instance bound to `127.0.0.1:47639`; `ss` showed
+only the loopback listener, `/-/ready` succeeded, and `/metrics` reported
+`all_smi_up` as 1. A second instance bound to `[::1]:47640` and passed the
+readiness check. Both servers were stopped after their captures. Invalid bind
+input exited with CLI status 2 before API startup.
+
 ## v0.28.1-metrum.1 — release validation in progress (Metrum AI)
 
 Merging upstream release tag v0.28.1 (`03e8fd0`) into fork main
