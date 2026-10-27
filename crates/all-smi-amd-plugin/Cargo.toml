@@ -26,3 +26,6 @@ libc = "0.2"
 # Keep this exact pin synchronized with the plugin metadata and the guard test
 # in src/lib.rs. Upstream has shipped patch-level API breaks in the past.
 libamdgpu_top = "=0.11.5"
+
+[dev-dependencies]
+tempfile = "3.23"

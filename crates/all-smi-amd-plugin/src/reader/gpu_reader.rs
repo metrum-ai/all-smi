@@ -120,6 +120,7 @@ impl GpuReader for AmdGpuReader {
 
             let mut utilization = 0.0;
             let mut power_consumption = 0.0;
+            let mut apu_gfx_power_available = false;
             let mut temperature: u32 = 0;
             let mut frequency: u32 = 0;
 
@@ -134,10 +135,39 @@ impl GpuReader for AmdGpuReader {
                 let socket_power = metrics
                     .get_average_socket_power()
                     .or_else(|| metrics.get_current_socket_power().map(u32::from));
-                if let (Some(header), Some(raw)) = (metrics.get_header(), socket_power)
-                    && let Some(watts) = metrics_socket_power_watts(header.format_revision, raw)
-                {
-                    power_consumption = watts;
+                if let Some(header) = metrics.get_header() {
+                    let socket_watts = socket_power
+                        .and_then(|raw| metrics_socket_power_watts(header.format_revision, raw));
+                    if let Some(watts) = socket_watts {
+                        power_consumption = watts;
+                    }
+                    if matches!(header.format_revision, 2 | 3) {
+                        if let Some(watts) = socket_watts {
+                            detail.insert(
+                                all_smi::device::readers::detail_keys::SOCKET_POWER_WATTS_DETAIL_KEY
+                                    .to_string(),
+                                format!("{watts:.3}"),
+                            );
+                        }
+                        if let Some(gfx_raw) = metrics.get_average_gfx_power_u32()
+                            && let Some(gfx_watts) = apu_gfx_power_watts(header.format_revision, gfx_raw)
+                        {
+                            power_consumption = gfx_watts;
+                            apu_gfx_power_available = true;
+                        }
+                        if let Some((used, total)) = read_gtt_memory_bytes(&device.device_path.sysfs_path) {
+                            detail.insert(
+                                all_smi::device::readers::detail_keys::GTT_MEMORY_USED_BYTES_DETAIL_KEY
+                                    .to_string(),
+                                used.to_string(),
+                            );
+                            detail.insert(
+                                all_smi::device::readers::detail_keys::GTT_MEMORY_TOTAL_BYTES_DETAIL_KEY
+                                    .to_string(),
+                                total.to_string(),
+                            );
+                        }
+                    }
                 }
                 if let Some(temp) = metrics.get_temperature_edge() {
                     // Validate temperature
@@ -155,7 +185,7 @@ impl GpuReader for AmdGpuReader {
                     // Approximate utilization from load if available, or leave 0
                     // libamdgpu_top doesn't expose a simple "gpu load" sensor easily without GpuMetrics or fdinfo
                 }
-                if power_consumption == 0.0 {
+                if power_consumption == 0.0 && !apu_gfx_power_available {
                     if let Some(ref p) = s.average_power {
                         power_consumption = hwmon_power_watts(p.value);
                     } else if let Some(ref p) = s.input_power {

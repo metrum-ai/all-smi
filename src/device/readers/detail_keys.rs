@@ -54,6 +54,13 @@ use std::sync::LazyLock;
 /// spelling distinction stays load-bearing).
 pub const CARD_POWER_WATTS_DETAIL_KEY: &str = "card_power_watts";
 
+/// Whole-SoC socket power in watts on APUs, separate from GFX-only GPU power.
+pub const SOCKET_POWER_WATTS_DETAIL_KEY: &str = "socket_power_watts";
+
+/// Shared GTT system-memory usage and capacity, in bytes, on AMD APUs.
+pub const GTT_MEMORY_USED_BYTES_DETAIL_KEY: &str = "gtt_memory_used_bytes";
+pub const GTT_MEMORY_TOTAL_BYTES_DETAIL_KEY: &str = "gtt_memory_total_bytes";
+
 /// Current PCIe link generation of a device, as a bare decimal number
 /// (`"4"`) with no `Gen` prefix and no formatting.
 ///
@@ -360,6 +367,9 @@ pub const VOLATILE_DETAIL_KEY_PREFIXES: &[&str] =
 /// typed.
 pub const VOLATILE_DETAIL_KEYS: &[&str] = &[
     CARD_POWER_WATTS_DETAIL_KEY,
+    SOCKET_POWER_WATTS_DETAIL_KEY,
+    GTT_MEMORY_USED_BYTES_DETAIL_KEY,
+    GTT_MEMORY_TOTAL_BYTES_DETAIL_KEY,
     "voltage",
     "current",
     "asic_temperature",
@@ -470,11 +480,34 @@ pub fn is_volatile_detail_key(key: &str) -> bool {
         .any(|prefix| label.starts_with(prefix.as_str()))
 }
 
-/// The board power carried under [`CARD_POWER_WATTS_DETAIL_KEY`], or `None`
-/// when the key is absent or does not hold a finite, non-negative number.
+/// Whole-APU socket power in watts, or `None` for an absent or invalid value.
+pub fn socket_power_watts(detail: &HashMap<String, String>) -> Option<f64> {
+    detail
+        .get(SOCKET_POWER_WATTS_DETAIL_KEY)?
+        .trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|watts| watts.is_finite() && *watts >= 0.0)
+}
+
+/// GTT memory byte counters carried by an AMD APU, or `None` if malformed.
+pub fn gtt_memory_bytes(detail: &HashMap<String, String>, key: &str) -> Option<u64> {
+    if ![
+        GTT_MEMORY_USED_BYTES_DETAIL_KEY,
+        GTT_MEMORY_TOTAL_BYTES_DETAIL_KEY,
+    ]
+    .contains(&key)
+    {
+        return None;
+    }
+    detail_bytes(detail.get(key)?)
+}
+
+/// Board power carried under [`CARD_POWER_WATTS_DETAIL_KEY`], or `None` when
+/// the key is absent or does not hold a finite, non-negative number.
 ///
-/// The value can arrive from a remote node's `all_smi_gpu_info` labels, so
-/// it is validated here rather than trusted.
+/// The value can arrive from a remote node's `all_smi_gpu_info` labels, so it
+/// is validated here rather than trusted.
 pub fn card_power_watts(detail: &HashMap<String, String>) -> Option<f64> {
     detail
         .get(CARD_POWER_WATTS_DETAIL_KEY)?

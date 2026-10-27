@@ -128,6 +128,31 @@ impl<'a> GpuMetricExporter<'a> {
                 info.total_memory,
             );
 
+        if let Some(used) = detail_keys::gtt_memory_bytes(
+            &info.detail,
+            detail_keys::GTT_MEMORY_USED_BYTES_DETAIL_KEY,
+        ) {
+            builder
+                .help(
+                    "all_smi_gpu_memory_gtt_used_bytes",
+                    "GPU GTT memory used in bytes",
+                )
+                .type_("all_smi_gpu_memory_gtt_used_bytes", "gauge")
+                .metric("all_smi_gpu_memory_gtt_used_bytes", &base_labels, used);
+        }
+        if let Some(total) = detail_keys::gtt_memory_bytes(
+            &info.detail,
+            detail_keys::GTT_MEMORY_TOTAL_BYTES_DETAIL_KEY,
+        ) {
+            builder
+                .help(
+                    "all_smi_gpu_memory_gtt_total_bytes",
+                    "GPU GTT memory total in bytes",
+                )
+                .type_("all_smi_gpu_memory_gtt_total_bytes", "gauge")
+                .metric("all_smi_gpu_memory_gtt_total_bytes", &base_labels, total);
+        }
+
         // Free memory, the third figure of the family above: the Gaudi
         // reader writes the live reading under `detail` in mebibytes, taken
         // from hl-smi's own CSV column, so it is read back through the
@@ -165,6 +190,15 @@ impl<'a> GpuMetricExporter<'a> {
                 )
                 .type_("all_smi_gpu_power_consumption_watts", "gauge")
                 .metric("all_smi_gpu_power_consumption_watts", &base_labels, power);
+        }
+        if let Some(socket_power) = detail_keys::socket_power_watts(&info.detail) {
+            builder
+                .help(
+                    "all_smi_gpu_socket_power_watts",
+                    "Whole-APU socket power in watts, distinct from GFX-only GPU power",
+                )
+                .type_("all_smi_gpu_socket_power_watts", "gauge")
+                .metric("all_smi_gpu_socket_power_watts", &base_labels, socket_power);
         }
 
         // Board power, repeated identically on every device of a multi-device
@@ -1899,8 +1933,29 @@ mod tests {
         );
     }
 
-    /// Issue #425: the board power reaches Prometheus as its own family, with
-    /// the same base label set as the power series it sits beside.
+    #[test]
+    fn apu_gtt_and_socket_power_details_are_exported_as_gauges() {
+        let mut gpu = make_nvidia_gpu();
+        gpu.detail.insert(
+            detail_keys::GTT_MEMORY_USED_BYTES_DETAIL_KEY.to_string(),
+            "5553598464".to_string(),
+        );
+        gpu.detail.insert(
+            detail_keys::GTT_MEMORY_TOTAL_BYTES_DETAIL_KEY.to_string(),
+            "121367355392".to_string(),
+        );
+        gpu.detail.insert(
+            detail_keys::SOCKET_POWER_WATTS_DETAIL_KEY.to_string(),
+            "68.900".to_string(),
+        );
+        let output = GpuMetricExporter::new(&[gpu]).export_metrics();
+        assert!(output.contains("all_smi_gpu_memory_gtt_used_bytes"));
+        assert!(output.contains("all_smi_gpu_memory_gtt_total_bytes"));
+        assert!(output.contains("all_smi_gpu_socket_power_watts"));
+        assert!(output.contains(" 5553598464\n"));
+        assert!(output.contains(" 68.9\n"));
+    }
+
     #[test]
     fn card_power_is_published_as_its_own_gauge_not_as_a_label() {
         let mut gpu = make_nvidia_gpu();

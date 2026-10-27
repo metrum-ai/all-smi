@@ -110,6 +110,25 @@ mod tests {
     }
 
     #[test]
+    fn apu_gfx_power_is_milliwatts_and_discrete_power_path_is_unchanged() {
+        assert_eq!(apu_gfx_power_watts(3, 15_700), Some(15.7));
+        assert_eq!(apu_gfx_power_watts(3, 80), Some(0.08));
+        assert_eq!(apu_gfx_power_watts(3, 0), Some(0.0));
+        assert_eq!(apu_gfx_power_watts(1, 700), None);
+        assert_eq!(apu_gfx_power_watts(3, u32::MAX), None);
+    }
+
+    #[test]
+    fn gtt_memory_sysfs_reader_accepts_valid_byte_counters() {
+        let dir = tempfile::tempdir().expect("temporary sysfs directory");
+        std::fs::write(dir.path().join("mem_info_gtt_used"), "4096\n").unwrap();
+        std::fs::write(dir.path().join("mem_info_gtt_total"), "8192\n").unwrap();
+        assert_eq!(read_gtt_memory_bytes(dir.path()), Some((4096, 8192)));
+        std::fs::write(dir.path().join("mem_info_gtt_used"), "9000").unwrap();
+        assert_eq!(read_gtt_memory_bytes(dir.path()), None);
+    }
+
+    #[test]
     fn test_gpu_metric_validation_constants() {
         // Test that validation constants are reasonable
         assert_eq!(MAX_GPU_UTILIZATION, 100.0, "Max utilization should be 100%");
