@@ -598,6 +598,9 @@ impl LocalCollector {
         // Reset refresh cycle counter (first iteration counts as cycle 0)
         self.refresh_cycle.store(1, Ordering::Relaxed);
 
+        let all_chassis_info =
+            crate::metrics::gpu_readings::inject_chassis_gpu_power(all_chassis_info, &all_gpu_info);
+
         CollectionData {
             gpu_info: all_gpu_info,
             cpu_info: all_cpu_info,
@@ -738,6 +741,9 @@ impl LocalCollector {
             .map(|p| sysinfo::Pid::from_u32(p.pid))
             .collect();
         *self.tracked_pids.write().await = new_tracked_pids;
+
+        let all_chassis_info =
+            crate::metrics::gpu_readings::inject_chassis_gpu_power(all_chassis_info, &all_gpu_info);
 
         CollectionData {
             gpu_info: all_gpu_info,

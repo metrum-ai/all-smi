@@ -209,6 +209,12 @@ pub async fn collect_once<C: SnapshotCollector + 'static>(
         }
     }
 
+    if let (Some(gpus), Some(chassis)) = (snap.gpus.as_ref(), snap.chassis.take()) {
+        snap.chassis = Some(crate::metrics::gpu_readings::inject_chassis_gpu_power(
+            chassis, gpus,
+        ));
+    }
+
     snap
 }
 

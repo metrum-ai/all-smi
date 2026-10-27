@@ -832,13 +832,13 @@ Note: Storage metrics exclude Docker bind mounts and are filtered to show only r
 
 ### Chassis/Node-Level Metrics
 
-Chassis metrics provide visibility into system-wide power consumption, thermal conditions, and cooling status at the node level. Availability and meaning depend on the platform reader. Generic Linux readers provide DMI and thermal-zone data; chassis power is omitted when no chassis-level source is available and is never inferred from GPU power.
+Chassis metrics provide visibility into system-wide power consumption, thermal conditions, and cooling status at the node level. Availability and meaning depend on the platform reader. Generic Linux readers use DMI and thermal zones rather than a BMC integration. If no platform chassis-power source is available, the existing GPU-sum fallback is retained for discrete device-power readings, skipping unavailable rows. On APUs where the GPU power field falls back to whole-socket power, that reading is excluded so socket power is not relabeled as chassis power or added to other devices.
 
 #### Common Chassis Metrics (All Platforms)
 
 | Metric                              | Description                                    | Unit    | Labels                  |
 |-------------------------------------|------------------------------------------------|---------|-------------------------|
-| `all_smi_chassis_power_watts`       | Platform-reported chassis/SoC power (omitted when unavailable) | watts | `hostname`, `instance` |
+| `all_smi_chassis_power_watts`       | Platform-reported chassis/SoC power or an estimated sum of available discrete GPU device-power readings; omitted when neither is available or the only AMD APU reading is socket-scoped | watts | `hostname`, `instance` |
 
 #### Apple Silicon Chassis Metrics
 
@@ -1321,7 +1321,7 @@ Higher update rates provide more real-time data but increase system load. For pr
     - Support for Gaudi 1/2/3 across PCIe, OAM, UBB, and HLS form factors
     - Background process monitoring via hl-smi with circular buffer
 11. Chassis/Node-level metrics include:
-    - Platform-reported chassis/SoC power when a reader provides a chassis-level source; device power is not summed to fabricate chassis power
+    - Total chassis power consumption aggregating CPU, GPU, and ANE power
     - Thermal pressure monitoring (Apple Silicon)
     - Individual power component breakdown (CPU, GPU, ANE)
     - Thermal-zone temperature estimates on generic Linux hosts; these are not dedicated BMC inlet/outlet probes

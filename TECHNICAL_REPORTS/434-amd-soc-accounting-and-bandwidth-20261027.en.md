@@ -4,10 +4,12 @@
 
 ## Scope
 
-This initial change keeps GPU/device power separate from chassis-level power. It
-removes fallbacks that presented aggregate GPU power as chassis power, and leaves
-`ChassisInfo.total_power_watts` unavailable when no chassis/SoC-level source is
-reported. GPU power remains available through its GPU-scoped metric. No RAPL or
+When no platform chassis-power source is available, the existing estimate from
+available discrete GPU device-power readings is retained. Unavailable GPU rows
+are skipped. On APUs, a GPU power value identified as whole-socket power is
+excluded so it is not relabeled as chassis power or added to another device.
+Platform-reported chassis power takes precedence. The same shared fallback
+helper is used by the API, snapshot, and local TUI collection paths. No RAPL or
 UMC perf counters are read by this change.
 
 ## Read-only system memory-bandwidth discovery
@@ -42,6 +44,8 @@ without an administrator's approval.
 
 ## Validation
 
-The snapshot regression test verifies that an available GPU power reading does
-not synthesize a chassis-level reading. Workspace tests, formatting, Clippy,
-and release-build results are recorded with the PR validation.
+Tests verify that discrete GPU readings (including multi-device rows with
+unavailable dies) still provide the fallback, that APU socket power is excluded,
+and that platform-reported chassis power takes precedence. Workspace tests,
+formatting, Clippy, and release-build results are recorded with the PR
+validation.

@@ -59,8 +59,7 @@ pub fn create_chassis_reader() -> Box<dyn ChassisReader> {
 
     #[cfg(not(target_os = "macos"))]
     {
-        // On other platforms, use the generic reader for platform identity and
-        // thermal zones. It does not infer chassis power from GPU readings.
+        // On other platforms, use generic reader that aggregates GPU power
         Box::new(GenericChassisReader::new())
     }
 }

@@ -741,9 +741,10 @@ pub struct MemoryInfo {
     pub time: String,          // Timestamp
 }
 
-/// Chassis/Node-level information for system-wide metrics.
-/// Power is present only when a platform chassis/SoC source reports it; device-domain
-/// power is not summed to fabricate a chassis reading.
+/// Chassis/node-level information for system-wide metrics. When no platform
+/// source reports total power, a sum of available discrete GPU device-power
+/// readings may be used as an estimate. A GPU reading identified as whole-APU
+/// socket power is excluded from that fallback.
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ChassisInfo {
     pub host_id: String,  // Host identifier (e.g., "10.82.128.41:9090")
@@ -751,7 +752,7 @@ pub struct ChassisInfo {
     pub instance: String, // Instance name from metrics
 
     // Power
-    pub total_power_watts: Option<f64>, // Platform-reported chassis/SoC power
+    pub total_power_watts: Option<f64>, // Platform power or discrete-GPU sum estimate
 
     // Thermal (BMC)
     pub inlet_temperature: Option<f64>, // Inlet temperature (if available)

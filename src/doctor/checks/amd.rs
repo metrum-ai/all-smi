@@ -683,6 +683,7 @@ fn check_rapl_access(_ctx: &CheckCtx) -> CheckResult {
     }
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn describe_rapl_access(domains: usize, readable: usize) -> CheckResult {
     if domains == 0 {
         return CheckResult::Skip(
@@ -730,6 +731,7 @@ fn check_umc_bandwidth(_ctx: &CheckCtx) -> CheckResult {
     }
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn describe_umc_bandwidth_availability(umc_count: usize, paranoid: Option<i32>) -> CheckResult {
     if umc_count == 0 {
         return CheckResult::Skip(

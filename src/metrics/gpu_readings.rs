@@ -32,7 +32,7 @@
 //! Every function here treats "nobody reported" as `None` (or `0.0` for the
 //! sums, where an empty sum genuinely is zero) rather than inventing a value.
 
-use crate::device::GpuInfo;
+use crate::device::{ChassisInfo, GpuInfo};
 
 /// Sum of the GPU power readings that are actually present, in watts.
 ///
@@ -44,6 +44,56 @@ pub fn total_power_watts(gpus: &[GpuInfo]) -> f64 {
     gpus.iter()
         .filter_map(GpuInfo::power_consumption_reading)
         .sum()
+}
+
+/// Power that can safely serve as a chassis fallback, or `None` when no
+/// device-domain reading is available. APU socket-power fallback samples are
+/// excluded: they already describe the whole SoC and must not be added to
+/// discrete-device power or relabeled as a chassis total.
+pub fn chassis_power_watts(gpus: &[GpuInfo]) -> Option<f64> {
+    let total: f64 = gpus
+        .iter()
+        .filter(|gpu| !is_socket_power_fallback(gpu))
+        .filter_map(GpuInfo::power_consumption_reading)
+        .sum();
+    (total > 0.0).then_some(total)
+}
+
+/// PR #39 carries the whole-APU socket reading in this volatile detail key.
+/// The GPU power field equals that reading only when GFX-only power was not
+/// available; compare at the key's three-decimal serialization precision.
+fn is_socket_power_fallback(gpu: &GpuInfo) -> bool {
+    let Some(socket_power) = gpu
+        .detail
+        .get("socket_power_watts")
+        .and_then(|value| value.parse::<f64>().ok())
+        .filter(|value| value.is_finite() && *value >= 0.0)
+    else {
+        return false;
+    };
+    gpu.power_consumption_reading()
+        .is_some_and(|power| (power - socket_power).abs() <= 0.0005)
+}
+
+/// Add a GPU-sum fallback to chassis rows that have no platform reading.
+/// Socket-power samples are filtered by [`chassis_power_watts`], while
+/// unavailable multi-die rows are skipped by [`GpuInfo::power_consumption_reading`].
+pub fn inject_chassis_gpu_power(
+    chassis_info: Vec<ChassisInfo>,
+    gpu_info: &[GpuInfo],
+) -> Vec<ChassisInfo> {
+    let Some(total) = chassis_power_watts(gpu_info) else {
+        return chassis_info;
+    };
+    chassis_info
+        .into_iter()
+        .map(|mut chassis| {
+            if chassis.total_power_watts.is_none() {
+                chassis.total_power_watts = Some(total);
+            }
+            chassis
+        })
+        .collect()
 }
 
 /// Mean power in watts across the GPUs that reported a power reading, or
@@ -240,6 +290,42 @@ mod tests {
         assert_eq!(mean_power_watts(&[card(0.0), card(10.0)]), Some(5.0));
         // Nobody reported: no mean, not 0 W.
         assert_eq!(mean_power_watts(&[unavailable(), unavailable()]), None);
+    }
+
+    #[test]
+    fn chassis_fallback_skips_socket_power_but_keeps_discrete_power() {
+        let mut apu = gpu(0.0, 40, 15.7);
+        apu.detail
+            .insert("socket_power_watts".to_string(), "15.700".to_string());
+        assert_eq!(chassis_power_watts(std::slice::from_ref(&apu)), None);
+
+        let discrete = gpu(0.0, 40, 120.0);
+        assert_eq!(
+            chassis_power_watts(&[apu.clone(), discrete, unavailable()]),
+            Some(120.0)
+        );
+
+        // A distinct GFX-only value is device-scoped even when a separate
+        // socket reading is present, and can still contribute to the fallback.
+        apu.power_consumption = 2.0;
+        assert_eq!(chassis_power_watts(&[apu]), Some(2.0));
+    }
+
+    #[test]
+    fn inject_chassis_gpu_power_preserves_platform_power_and_skips_apu_socket() {
+        let mut apu = gpu(0.0, 40, 15.7);
+        apu.detail
+            .insert("socket_power_watts".to_string(), "15.700".to_string());
+        let no_fallback = inject_chassis_gpu_power(vec![ChassisInfo::default()], &[apu]);
+        assert_eq!(no_fallback[0].total_power_watts, None);
+
+        let discrete = gpu(0.0, 40, 120.0);
+        let measured = ChassisInfo {
+            total_power_watts: Some(900.0),
+            ..ChassisInfo::default()
+        };
+        let preserved = inject_chassis_gpu_power(vec![measured], &[discrete]);
+        assert_eq!(preserved[0].total_power_watts, Some(900.0));
     }
 
     #[test]
