@@ -114,7 +114,12 @@ fn parse_pp_dpm_clock_levels(contents: &str) -> Option<DpmClockInfo> {
         let Some(token) = rest.split_whitespace().next() else {
             continue;
         };
-        let digits: String = token.chars().take_while(char::is_ascii_digit).collect();
+        let Some((digits, unit)) = token.split_at_checked(token.len().saturating_sub(3)) else {
+            continue;
+        };
+        if !unit.eq_ignore_ascii_case("mhz") {
+            continue;
+        }
         let Ok(mhz) = digits.parse::<u32>() else {
             continue;
         };
