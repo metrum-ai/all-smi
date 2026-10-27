@@ -707,6 +707,36 @@ so every ATOM+ device reports its own power and publishes no
 
 Note: Furiosa NPUs use the RNGD architecture with 8 cores per NPU. Each core contains multiple Processing Elements (PEs) that handle neural network computations. The power governor supports OnDemand mode for dynamic power management.
 
+### AMD XDNA NPU Metrics (Linux)
+
+Linux AMD XDNA devices are discovered from `/sys/class/accel` by matching the
+bound `amdxdna` driver. The reader reports the kernel-provided device identity
+and firmware version. Client processes are associated only when their open
+`/dev/accel/accelN` file and readable DRM fdinfo are visible to all-smi; a
+process row is emitted only for fdinfo identifying the AMD XDNA DRM driver and
+containing recognized memory rows. Current `drm-total-*` rows take precedence;
+deprecated `drm-memory-*` rows are used only when no total rows are present.
+Unitless values are bytes, and the specified `KiB` and `MiB` units are
+converted. Memory is deduplicated by `(pid, drm-client-id)` when that kernel
+field is available. Missing or unrecognized memory data is omitted rather than
+reported as zero. `ProcessInfo.command` follows the existing process-enrichment
+path and may include arguments, so consumers should treat it as sensitive.
+Process device indices use the combined GPU/NPU enumeration.
+Utilization, power, temperature, total memory, driver version, power mode, and
+firmware-error counters are omitted when the kernel does not provide them; zero
+is not used as a substitute for an unavailable reading.
+
+| Metric                              | Description                | Unit | Labels                                                         |
+|-------------------------------------|----------------------------|------|----------------------------------------------------------------|
+| `all_smi_amdxdna_firmware_info`     | XDNA firmware version      | info | `npu`, `instance`, `npu_uuid`, `npu_index`, `version`           |
+| `all_smi_amdxdna_device_info`       | XDNA PCI device identity   | info | `npu`, `instance`, `npu_uuid`, `npu_index`, `pci_slot`          |
+
+Per-process client BO bytes are available through the existing GPU process
+metrics when the kernel exposes DRM total-memory or legacy memory rows in
+fdinfo. An empty client list means no matching readable process descriptor with
+a recognized memory row was observed; it does not claim that no workload is running when process visibility
+is restricted.
+
 ### Intel Gaudi NPU Metrics
 
 #### Basic NPU Metrics

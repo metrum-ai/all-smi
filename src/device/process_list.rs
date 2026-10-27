@@ -16,6 +16,32 @@ use crate::device::types::ProcessInfo;
 use std::collections::{HashMap, HashSet};
 use sysinfo::{ProcessStatus, System};
 
+/// Set each GPU process row's device index to its position in the combined
+/// GPU/NPU enumeration. Reader-local indices are not globally meaningful.
+pub fn align_gpu_process_device_indices_by_uuid<'a>(
+    devices: impl IntoIterator<Item = &'a str>,
+    processes: &mut [ProcessInfo],
+) {
+    align_gpu_process_device_indices(devices.into_iter().enumerate(), processes);
+}
+
+/// Map each process row to its position in the combined GPU/NPU enumeration
+/// using the device UUID. Reader-local indices are not globally meaningful.
+pub fn align_gpu_process_device_indices<'a>(
+    devices: impl IntoIterator<Item = (usize, &'a str)>,
+    processes: &mut [ProcessInfo],
+) {
+    let indices: HashMap<&str, usize> = devices
+        .into_iter()
+        .map(|(index, uuid)| (uuid, index))
+        .collect();
+    for process in processes {
+        if let Some(index) = indices.get(process.device_uuid.as_str()) {
+            process.device_id = *index;
+        }
+    }
+}
+
 #[cfg(target_os = "macos")]
 #[path = "process_list/pidinfo_macos.rs"]
 mod pidinfo_macos;
@@ -411,6 +437,17 @@ pub(super) mod tests {
             enc_util: None,
             dec_util: None,
         }
+    }
+
+    #[test]
+    fn gpu_process_indices_match_combined_gpu_and_npu_enumeration() {
+        let mut npu_process = process(123, "AMD-XDNA-0000:c3:00.1", 4096, true);
+        npu_process.device_id = 0; // Reader-local NPU index.
+        align_gpu_process_device_indices_by_uuid(
+            ["AMD-IGPU-0000:c2:00.0", "AMD-XDNA-0000:c3:00.1"],
+            std::slice::from_mut(&mut npu_process),
+        );
+        assert_eq!(npu_process.device_id, 1);
     }
 
     #[test]

@@ -86,7 +86,7 @@ pub async fn run_collection_loop(
             .flat_map(|reader| reader.get_memory_info())
             .collect();
 
-        let all_processes: Vec<ProcessInfo> = if processes_enabled {
+        let mut all_processes: Vec<ProcessInfo> = if processes_enabled {
             gpu_readers
                 .iter()
                 .flat_map(|reader| reader.get_process_info())
@@ -94,6 +94,10 @@ pub async fn run_collection_loop(
         } else {
             Vec::new()
         };
+        crate::device::process_list::align_gpu_process_device_indices_by_uuid(
+            all_gpu_info.iter().map(|gpu| gpu.uuid.as_str()),
+            &mut all_processes,
+        );
 
         // Preserve the discrete-device fallback while excluding APU samples
         // that carry whole-socket rather than GFX-only power.

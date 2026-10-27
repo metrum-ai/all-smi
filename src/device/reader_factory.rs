@@ -21,10 +21,10 @@ use crate::device::{
 };
 
 #[cfg(target_os = "linux")]
-use crate::device::platform_detection::{has_google_tpu, has_neuron, has_tenstorrent};
+use crate::device::platform_detection::{has_amdxdna, has_google_tpu, has_neuron, has_tenstorrent};
 
 #[cfg(target_os = "linux")]
-use crate::device::readers::{google_tpu, neuron, tenstorrent};
+use crate::device::readers::{amdxdna, google_tpu, neuron, tenstorrent};
 
 #[cfg(target_os = "macos")]
 use crate::device::{cpu_macos, memory_macos, platform_detection::is_apple_silicon};
@@ -92,6 +92,13 @@ pub fn get_gpu_readers() -> Vec<Box<dyn GpuReader>> {
             // Check for Intel Gaudi NPU support
             if has_gaudi() {
                 readers.push(Box::new(gaudi::GaudiNpuReader::new()));
+            }
+
+            // AMD XDNA (Strix Halo and related systems) uses the generic
+            // Linux accel class; match the bound driver, not accel0 alone.
+            #[cfg(target_os = "linux")]
+            if has_amdxdna() {
+                readers.push(Box::new(amdxdna::AmdXdnaNpuReader::new()));
             }
 
             // Check for AWS Neuron (Trainium / Inferentia) support

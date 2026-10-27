@@ -106,27 +106,34 @@ impl<'a> GpuMetricExporter<'a> {
                 .metric("all_smi_gpu_utilization", &base_labels, utilization);
         }
 
-        // Memory metrics
-        builder
-            .help("all_smi_gpu_memory_used_bytes", "GPU memory used in bytes")
-            .type_("all_smi_gpu_memory_used_bytes", "gauge")
-            .metric(
-                "all_smi_gpu_memory_used_bytes",
-                &base_labels,
-                info.used_memory,
-            );
+        // Memory metrics. Readers that cannot distinguish an unavailable
+        // counter from a real zero mark it explicitly in `detail`.
+        if info
+            .detail
+            .get(detail_keys::MEMORY_STATUS_DETAIL_KEY)
+            .is_none_or(|status| status != "unavailable")
+        {
+            builder
+                .help("all_smi_gpu_memory_used_bytes", "GPU memory used in bytes")
+                .type_("all_smi_gpu_memory_used_bytes", "gauge")
+                .metric(
+                    "all_smi_gpu_memory_used_bytes",
+                    &base_labels,
+                    info.used_memory,
+                );
 
-        builder
-            .help(
-                "all_smi_gpu_memory_total_bytes",
-                "GPU memory total in bytes",
-            )
-            .type_("all_smi_gpu_memory_total_bytes", "gauge")
-            .metric(
-                "all_smi_gpu_memory_total_bytes",
-                &base_labels,
-                info.total_memory,
-            );
+            builder
+                .help(
+                    "all_smi_gpu_memory_total_bytes",
+                    "GPU memory total in bytes",
+                )
+                .type_("all_smi_gpu_memory_total_bytes", "gauge")
+                .metric(
+                    "all_smi_gpu_memory_total_bytes",
+                    &base_labels,
+                    info.total_memory,
+                );
+        }
 
         if let Some(used) = detail_keys::gtt_memory_bytes(
             &info.detail,
@@ -1244,6 +1251,29 @@ mod tests {
         );
         // Memory comes from sysinfo, not IOReport, so it keeps reporting.
         assert!(output.contains("all_smi_gpu_memory_total_bytes{"));
+    }
+
+    #[test]
+    fn exporter_omits_memory_gauges_when_reader_marks_them_unavailable() {
+        let mut gpu = make_nvidia_gpu();
+        gpu.name = "NPU Strix Halo".to_string();
+        gpu.device_type = "NPU".to_string();
+        gpu.used_memory = 0;
+        gpu.total_memory = 0;
+        gpu.detail.insert(
+            detail_keys::MEMORY_STATUS_DETAIL_KEY.to_string(),
+            "unavailable".to_string(),
+        );
+
+        let output = GpuMetricExporter::new(&[gpu]).export_metrics();
+        assert!(
+            !output.contains("all_smi_gpu_memory_used_bytes{"),
+            "{output}"
+        );
+        assert!(
+            !output.contains("all_smi_gpu_memory_total_bytes{"),
+            "{output}"
+        );
     }
 
     /// Issue #378: a Windows WMI baseline must keep an unsourced field

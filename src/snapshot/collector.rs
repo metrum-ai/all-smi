@@ -209,6 +209,13 @@ pub async fn collect_once<C: SnapshotCollector + 'static>(
         }
     }
 
+    if let (Some(gpus), Some(processes)) = (snap.gpus.as_ref(), snap.processes.as_mut()) {
+        crate::device::process_list::align_gpu_process_device_indices_by_uuid(
+            gpus.iter().map(|gpu| gpu.uuid.as_str()),
+            processes,
+        );
+    }
+
     if let (Some(gpus), Some(chassis)) = (snap.gpus.as_ref(), snap.chassis.take()) {
         snap.chassis = Some(crate::metrics::gpu_readings::inject_chassis_gpu_power(
             chassis, gpus,
@@ -230,4 +237,121 @@ enum SectionResult {
     Processes(Vec<ProcessInfo>),
     Storage(Vec<StorageInfo>),
     Empty,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::SnapshotIncludes;
+    use std::collections::HashMap;
+
+    struct XdnaCollector;
+
+    impl SnapshotCollector for XdnaCollector {
+        fn hostname(&self) -> String {
+            "test-host".to_string()
+        }
+        fn collect_gpus(&self) -> Vec<GpuInfo> {
+            vec![
+                gpu("AMD-IGPU-0000:c2:00.0", "GPU"),
+                gpu("AMD-XDNA-0000:c3:00.1", "NPU"),
+            ]
+        }
+        fn collect_cpus(&self) -> Vec<CpuInfo> {
+            Vec::new()
+        }
+        fn collect_memory(&self) -> Vec<MemoryInfo> {
+            Vec::new()
+        }
+        fn collect_chassis(&self) -> Vec<ChassisInfo> {
+            Vec::new()
+        }
+        fn collect_processes(&self) -> Vec<ProcessInfo> {
+            vec![ProcessInfo {
+                device_id: 0,
+                device_uuid: "AMD-XDNA-0000:c3:00.1".to_string(),
+                pid: 123,
+                process_name: "npu-client".to_string(),
+                used_memory: 4096,
+                cpu_percent: 0.0,
+                memory_percent: 0.0,
+                memory_rss: 0,
+                memory_vms: 0,
+                user: "test".to_string(),
+                state: "S".to_string(),
+                start_time: String::new(),
+                cpu_time: 0,
+                command: "npu-client".to_string(),
+                ppid: 1,
+                threads: 1,
+                uses_gpu: true,
+                priority: 0,
+                nice_value: 0,
+                gpu_utilization: 0.0,
+                gpu_mem_util: None,
+                enc_util: None,
+                dec_util: None,
+            }]
+        }
+        fn collect_storage(&self) -> Vec<StorageInfo> {
+            Vec::new()
+        }
+    }
+
+    fn gpu(uuid: &str, device_type: &str) -> GpuInfo {
+        GpuInfo {
+            uuid: uuid.to_string(),
+            time: String::new(),
+            name: device_type.to_string(),
+            device_type: device_type.to_string(),
+            host_id: "test-host".to_string(),
+            hostname: "test-host".to_string(),
+            instance: "test-host".to_string(),
+            utilization: 0.0,
+            ane_utilization: 0.0,
+            dla_utilization: None,
+            tensorcore_utilization: None,
+            temperature: 0,
+            used_memory: 0,
+            total_memory: 0,
+            frequency: 0,
+            power_consumption: 0.0,
+            gpu_core_count: None,
+            temperature_threshold_slowdown: None,
+            temperature_threshold_shutdown: None,
+            temperature_threshold_max_operating: None,
+            temperature_threshold_acoustic: None,
+            performance_state: None,
+            fan_speed_rpm: None,
+            numa_node_id: None,
+            gsp_firmware_mode: None,
+            gsp_firmware_version: None,
+            nvlink_remote_devices: Vec::new(),
+            gpm_metrics: None,
+            throttle_reasons: None,
+            energy_hw_millijoules: None,
+            remapped_rows: None,
+            nvlink_errors: Vec::new(),
+            utilization_samples: None,
+            xid_event_counts: HashMap::new(),
+            detail: HashMap::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn snapshot_process_index_uses_combined_gpu_npu_order() {
+        let snapshot = collect_once(
+            Arc::new(XdnaCollector),
+            &SnapshotIncludes {
+                gpu: true,
+                process: true,
+                ..Default::default()
+            },
+            Duration::from_secs(1),
+        )
+        .await;
+        let process = &snapshot.processes.unwrap()[0];
+        assert_eq!(process.device_uuid, "AMD-XDNA-0000:c3:00.1");
+        assert_eq!(process.device_id, 1);
+    }
 }
