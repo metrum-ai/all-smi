@@ -66,6 +66,9 @@ pub mod tpu_sysfs;
 #[cfg(target_os = "linux")]
 pub mod tenstorrent;
 
+#[cfg(target_os = "linux")]
+pub mod amdxdna;
+
 // AWS Neuron (Trainium / Inferentia). Linux-only: the `neuron` kernel
 // module, its sysfs tree, and the `aws-neuronx-tools` CLIs exist on no
 // other platform.

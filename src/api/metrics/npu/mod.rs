@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#[cfg(target_os = "linux")]
+pub mod amdxdna;
 pub mod common;
 pub mod exporter_trait;
 pub mod furiosa;
@@ -33,9 +35,11 @@ static EXPORTER_POOL: OnceLock<Vec<Box<dyn NpuExporter + Send + Sync>>> = OnceLo
 
 /// Position of the AWS Neuron exporter in [`EXPORTER_POOL`] on Linux.
 /// The pool is `[Tenstorrent, Gaudi, Rebellions, Furiosa, Google TPU,
-/// AWS Neuron]` there; `exporter_pool_indices_are_pinned` locks it in.
+/// AWS Neuron, AMD XDNA]` there; `exporter_pool_indices_are_pinned` locks it in.
 #[cfg(target_os = "linux")]
 const NEURON_IDX: usize = 5;
+#[cfg(target_os = "linux")]
+const AMD_XDNA_IDX: usize = 6;
 
 /// Main NPU metric exporter that coordinates between different vendor-specific exporters
 pub struct NpuMetricExporter<'a> {
@@ -60,9 +64,11 @@ impl<'a> NpuMetricExporter<'a> {
             // another vendor's metrics. AWS Neuron is Linux-only, so it
             // cannot live in the cross-platform `vec!` above and is
             // pushed after the Tenstorrent insert instead — landing at
-            // index 5, which `NEURON_IDX` below pins.
+            // index 5, which `NEURON_IDX` below pins. XDNA is appended at 6.
             #[cfg(target_os = "linux")]
             exporters.push(Box::new(neuron::NeuronExporter::new()));
+            #[cfg(target_os = "linux")]
+            exporters.push(Box::new(amdxdna::AmdXdnaExporter::new()));
             exporters
         });
 
@@ -78,6 +84,15 @@ impl<'a> NpuMetricExporter<'a> {
 
             // Direct index access for known vendors (most common first)
             #[cfg(target_os = "linux")]
+            if info
+                .detail
+                .get("driver")
+                .is_some_and(|driver| driver == "amdxdna")
+            {
+                return Some(exporters[AMD_XDNA_IDX].as_ref());
+            }
+
+            #[cfg(target_os = "linux")]
             if name.contains("Tenstorrent") {
                 return Some(exporters[0].as_ref());
             }
@@ -91,7 +106,7 @@ impl<'a> NpuMetricExporter<'a> {
             }
 
             // Index mapping based on platform
-            // Linux: [Tenstorrent, Gaudi, Rebellions, Furiosa, Google TPU, AWS Neuron]
+            // Linux: [Tenstorrent, Gaudi, Rebellions, Furiosa, Google TPU, AWS Neuron, AMD XDNA]
             // Other: [Gaudi, Rebellions, Furiosa, Google TPU]
             #[cfg(target_os = "linux")]
             let (gaudi_idx, rebellions_idx, furiosa_idx, tpu_idx) = (1, 2, 3, 4);
@@ -310,8 +325,12 @@ mod tests {
                 Some(TENSTORRENT_IDX)
             );
             let pool = EXPORTER_POOL.get().expect("pool initialized");
-            assert_eq!(pool.len(), 6);
+            assert_eq!(pool.len(), 7);
             assert!(pool[NEURON_IDX].can_handle(&npu_named("AWS Trainium1", &[])));
+            assert!(
+                pool[AMD_XDNA_IDX]
+                    .can_handle(&npu_named("NPU Strix Halo", &[("driver", "amdxdna")]))
+            );
         }
     }
 

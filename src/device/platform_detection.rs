@@ -542,13 +542,46 @@ fn accel_vendor_is_habana(vendor: &str) -> bool {
 /// Sysfs class directory of the kernel's compute-accelerator nodes.
 pub(crate) const ACCEL_SYSFS_CLASS_DIR: &str = "/sys/class/accel";
 
+/// Detect the AMD XDNA driver through the generic kernel accel class.
+#[cfg(target_os = "linux")]
+pub fn has_amdxdna() -> bool {
+    static CACHE: OnceLock<bool> = OnceLock::new();
+    *CACHE.get_or_init(|| amdxdna_accel_node_count(std::path::Path::new(ACCEL_SYSFS_CLASS_DIR)) > 0)
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn is_amdxdna_accel_node(node: &std::path::Path) -> bool {
+    let is_device_node = node
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_prefix("accel"))
+        .is_some_and(|index| !index.is_empty() && index.bytes().all(|b| b.is_ascii_digit()));
+    if !is_device_node {
+        return false;
+    }
+
+    let device = node.join("device");
+    std::fs::read_to_string(device.join("uevent"))
+        .is_ok_and(|uevent| uevent.lines().any(|line| line == "DRIVER=amdxdna"))
+        || std::fs::read_link(device.join("driver"))
+            .is_ok_and(|target| target.file_name().is_some_and(|name| name == "amdxdna"))
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn amdxdna_accel_node_count(class_dir: &std::path::Path) -> usize {
+    let Ok(entries) = std::fs::read_dir(class_dir) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .filter(|entry| is_amdxdna_accel_node(&entry.path()))
+        .count()
+}
+
 /// Number of Habana device nodes (`accel<N>`) under an accel class directory,
-/// normally [`ACCEL_SYSFS_CLASS_DIR`].
-///
-/// Every node is checked, since another accelerator may own accel0, and a
-/// node whose vendor cannot be read does not count. Habana's control nodes
-/// (`accel_controlD<N>`) are skipped so each card counts once. Detection and
-/// the `gaudi.devices` doctor check both use this, so they cannot disagree.
+/// normally [`ACCEL_SYSFS_CLASS_DIR`]. Every node is checked, since another
+/// accelerator may own accel0; unreadable vendor IDs and control nodes do not
+/// count. Detection and the `gaudi.devices` doctor check share this helper.
 pub(crate) fn habana_accel_node_count(class_dir: &std::path::Path) -> usize {
     let Ok(entries) = std::fs::read_dir(class_dir) else {
         return 0;
@@ -729,6 +762,26 @@ mod tests {
         assert!(!accel_vendor_is_habana("0x1eff\n"));
         assert!(!accel_vendor_is_habana("0x1ae0\n"));
         assert!(!accel_vendor_is_habana(""));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn amdxdna_detection_uses_driver_identity_not_generic_accel_presence() {
+        let class = tempfile::tempdir().expect("tempdir");
+        let node = |name: &str, driver: &str| {
+            let device = class.path().join(name).join("device");
+            std::fs::create_dir_all(&device).expect("node dir");
+            std::fs::write(device.join("uevent"), format!("DRIVER={driver}\n"))
+                .expect("uevent file");
+        };
+
+        node("accel0", "google_tpu");
+        node("accel1", "amdxdna");
+        node("accel2", "habana");
+        node("accel_controlD1", "amdxdna");
+        node("accelerator", "amdxdna");
+        assert_eq!(amdxdna_accel_node_count(class.path()), 1);
+        assert_eq!(amdxdna_accel_node_count(&class.path().join("missing")), 0);
     }
 
     /// Regression: only accel0 was checked, and an unreadable vendor counted
