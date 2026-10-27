@@ -739,6 +739,85 @@ impl<'a> GpuMetricExporter<'a> {
                 .metric("all_smi_gpu_throttle_residency_raw", &reason_labels, value);
         }
 
+        for (prefix, metric, help) in [
+            (
+                detail_keys::DPM_CLOCK_LEVEL_DETAIL_KEY_PREFIX,
+                "all_smi_gpu_clock_domain_dpm_current_level",
+                "Current AMD DPM table level index",
+            ),
+            (
+                detail_keys::DPM_CLOCK_MIN_MHZ_DETAIL_KEY_PREFIX,
+                "all_smi_gpu_clock_domain_dpm_min_mhz",
+                "Minimum frequency in the AMD DPM table",
+            ),
+            (
+                detail_keys::DPM_CLOCK_MAX_MHZ_DETAIL_KEY_PREFIX,
+                "all_smi_gpu_clock_domain_dpm_max_mhz",
+                "Maximum frequency in the AMD DPM table",
+            ),
+        ] {
+            for (key, raw) in info
+                .detail
+                .iter()
+                .filter(|(key, _)| key.starts_with(prefix))
+            {
+                let Some(value) = detail_keys::leading_number(raw) else {
+                    continue;
+                };
+                let Some(domain) = key.strip_prefix(prefix) else {
+                    continue;
+                };
+                let labels = [
+                    ("gpu", info.name.as_str()),
+                    ("instance", info.instance.as_str()),
+                    ("gpu_uuid", info.uuid.as_str()),
+                    ("gpu_index", row.index_str.as_str()),
+                    ("domain", domain),
+                ];
+                builder
+                    .help(metric, help)
+                    .type_(metric, "gauge")
+                    .metric(metric, &labels, value);
+            }
+        }
+
+        if let Some(level) = info
+            .detail
+            .get(detail_keys::AMD_PERFORMANCE_LEVEL_DETAIL_KEY)
+        {
+            let labels = [
+                ("gpu", info.name.as_str()),
+                ("instance", info.instance.as_str()),
+                ("gpu_uuid", info.uuid.as_str()),
+                ("gpu_index", row.index_str.as_str()),
+                ("level", level.as_str()),
+            ];
+            builder
+                .help(
+                    "all_smi_gpu_performance_level_info",
+                    "AMD forced performance-level mode",
+                )
+                .type_("all_smi_gpu_performance_level_info", "gauge")
+                .metric("all_smi_gpu_performance_level_info", &labels, 1);
+        }
+
+        if let Some(profile) = info.detail.get(detail_keys::AMD_POWER_PROFILE_DETAIL_KEY) {
+            let labels = [
+                ("gpu", info.name.as_str()),
+                ("instance", info.instance.as_str()),
+                ("gpu_uuid", info.uuid.as_str()),
+                ("gpu_index", row.index_str.as_str()),
+                ("profile", profile.as_str()),
+            ];
+            builder
+                .help(
+                    "all_smi_gpu_power_profile_info",
+                    "Active AMD power profile from sysfs",
+                )
+                .type_("all_smi_gpu_power_profile_info", "gauge")
+                .metric("all_smi_gpu_power_profile_info", &labels, 1);
+        }
+
         // Power limit metrics
         if let Some(power_limit) = info.detail.get("power_limit_current")
             && let Ok(power) = power_limit.parse::<f64>()
@@ -1837,6 +1916,16 @@ mod tests {
             "Throttle residency raw: spl".to_string(),
             "94236815".to_string(),
         );
+        gpu.detail
+            .insert("DPM level: SCLK".to_string(), "0".to_string());
+        gpu.detail
+            .insert("DPM min MHz: SCLK".to_string(), "600".to_string());
+        gpu.detail
+            .insert("DPM max MHz: SCLK".to_string(), "2900".to_string());
+        gpu.detail.insert(
+            detail_keys::AMD_PERFORMANCE_LEVEL_DETAIL_KEY.to_string(),
+            "auto".to_string(),
+        );
 
         let output = GpuMetricExporter::new(&[gpu]).export_metrics();
 
@@ -1876,6 +1965,10 @@ mod tests {
             .unwrap_or_else(|| panic!("throttle residency gauge missing:\n{output}"));
         assert!(throttle.contains("reason=\"spl\""));
         assert!(throttle.ends_with(" 94236815"));
+        assert!(output.contains("all_smi_gpu_clock_domain_dpm_current_level{"));
+        assert!(output.contains("all_smi_gpu_clock_domain_dpm_min_mhz{"));
+        assert!(output.contains("all_smi_gpu_clock_domain_dpm_max_mhz{"));
+        assert!(output.contains("all_smi_gpu_performance_level_info{"));
 
         let info = output
             .lines()

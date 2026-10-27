@@ -94,6 +94,110 @@ fn read_gtt_memory_bytes(sysfs_path: &std::path::Path) -> Option<(u64, u64)> {
     (used <= total).then_some((used, total))
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct DpmClockInfo {
+    min_mhz: u32,
+    max_mhz: u32,
+    current_level: Option<u32>,
+    current_mhz: Option<u32>,
+}
+
+fn parse_pp_dpm_clock_levels(contents: &str) -> Option<DpmClockInfo> {
+    let mut levels = Vec::new();
+    for line in contents.lines() {
+        let Some((index, rest)) = line.split_once(':') else {
+            continue;
+        };
+        let Ok(index) = index.trim().parse::<u32>() else {
+            continue;
+        };
+        let Some(token) = rest.split_whitespace().next() else {
+            continue;
+        };
+        let digits: String = token.chars().take_while(char::is_ascii_digit).collect();
+        let Ok(mhz) = digits.parse::<u32>() else {
+            continue;
+        };
+        let current = rest.split_whitespace().any(|part| part == "*");
+        levels.push((index, mhz, current));
+    }
+    let min_mhz = levels.iter().map(|(_, mhz, _)| *mhz).min()?;
+    let max_mhz = levels.iter().map(|(_, mhz, _)| *mhz).max()?;
+    let current = levels.iter().find(|(_, _, current)| *current);
+    Some(DpmClockInfo {
+        min_mhz,
+        max_mhz,
+        current_level: current.map(|(index, _, _)| *index),
+        current_mhz: current.map(|(_, mhz, _)| *mhz),
+    })
+}
+
+fn active_power_profile(contents: &str) -> Option<String> {
+    let line = contents.lines().find(|line| line.contains('*'))?;
+    let (index, name) = line.split_once(':')?;
+    let index = index.trim().parse::<u32>().ok()?;
+    let name = name.split('*').next()?.trim();
+    (!name.is_empty()).then(|| format!("{index}:{name}"))
+}
+
+fn read_vcn_busy_percent(sysfs_path: &std::path::Path) -> Option<u16> {
+    let busy = std::fs::read_to_string(sysfs_path.join("vcn_busy_percent"))
+        .ok()?
+        .trim()
+        .parse::<u16>()
+        .ok()?;
+    (busy <= 100).then_some(busy)
+}
+
+fn read_apu_sysfs_details(sysfs_path: &std::path::Path, detail: &mut HashMap<String, String>) {
+    use all_smi::device::readers::detail_keys as keys;
+    for (file, domain) in [
+        ("pp_dpm_sclk", "SCLK"),
+        ("pp_dpm_mclk", "MCLK"),
+        ("pp_dpm_fclk", "FCLK"),
+        ("pp_dpm_socclk", "SOCCLK"),
+    ] {
+        let Ok(contents) = std::fs::read_to_string(sysfs_path.join(file)) else {
+            continue;
+        };
+        let Some(clock) = parse_pp_dpm_clock_levels(&contents) else {
+            continue;
+        };
+        detail.insert(
+            format!("{}{}", keys::DPM_CLOCK_MIN_MHZ_DETAIL_KEY_PREFIX, domain),
+            clock.min_mhz.to_string(),
+        );
+        detail.insert(
+            format!("{}{}", keys::DPM_CLOCK_MAX_MHZ_DETAIL_KEY_PREFIX, domain),
+            clock.max_mhz.to_string(),
+        );
+        if let Some(level) = clock.current_level {
+            detail.insert(
+                format!("{}{}", keys::DPM_CLOCK_LEVEL_DETAIL_KEY_PREFIX, domain),
+                level.to_string(),
+            );
+        }
+        if let Some(mhz) = clock.current_mhz {
+            detail.insert(format!("Frequency: {domain} (DPM)"), mhz.to_string());
+        }
+    }
+    if let Ok(level) = std::fs::read_to_string(sysfs_path.join("power_dpm_force_performance_level"))
+    {
+        let level = level.trim();
+        if !level.is_empty() {
+            detail.insert(
+                keys::AMD_PERFORMANCE_LEVEL_DETAIL_KEY.to_string(),
+                level.to_string(),
+            );
+        }
+    }
+    if let Ok(profile) = std::fs::read_to_string(sysfs_path.join("pp_power_profile_mode"))
+        && let Some(profile) = active_power_profile(&profile)
+    {
+        detail.insert(keys::AMD_POWER_PROFILE_DETAIL_KEY.to_string(), profile);
+    }
+}
+
 fn insert_apu_metric_details(
     detail: &mut HashMap<String, String>,
     clocks_mhz: &[(&str, Option<u16>)],

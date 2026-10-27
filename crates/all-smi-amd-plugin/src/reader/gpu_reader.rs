@@ -168,6 +168,7 @@ impl GpuReader for AmdGpuReader {
                             );
                         }
                         if header.format_revision == 3 {
+                            read_apu_sysfs_details(&device.device_path.sysfs_path, &mut detail);
                             insert_apu_metric_details(
                                 &mut detail,
                                 &[
@@ -180,7 +181,9 @@ impl GpuReader for AmdGpuReader {
                                     ("IPUCLK", metrics.get_average_ipuclk_frequency()),
                                     ("MPIPU", metrics.get_average_mpipu_frequency()),
                                 ],
-                                metrics.get_average_mm_activity(),
+                                metrics.get_average_mm_activity().or_else(|| {
+                                    read_vcn_busy_percent(&device.device_path.sysfs_path)
+                                }),
                                 &[
                                     ("prochot", metrics.get_throttle_residency_prochot()),
                                     ("spl", metrics.get_throttle_residency_spl()),

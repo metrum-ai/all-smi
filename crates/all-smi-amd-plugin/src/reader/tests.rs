@@ -129,6 +129,25 @@ mod tests {
     }
 
     #[test]
+    fn pp_dpm_parser_reports_current_level_and_clock_range() {
+        let parsed = parse_pp_dpm_clock_levels(
+            "0: 600Mhz *\n1: 1100Mhz \n2: 2900Mhz \ninvalid\n",
+        )
+        .unwrap();
+        assert_eq!(
+            parsed,
+            DpmClockInfo {
+                min_mhz: 600,
+                max_mhz: 2900,
+                current_level: Some(0),
+                current_mhz: Some(600),
+            }
+        );
+        assert_eq!(active_power_profile("0: BOOTUP_DEFAULT \n1: 3D Fullscreen *\n"), Some("1:3D Fullscreen".to_string()));
+        assert_eq!(active_power_profile("0: BOOTUP_DEFAULT\n"), None);
+    }
+
+    #[test]
     fn apu_gpu_metrics_publish_clocks_vcn_and_raw_throttle_residency() {
         let mut detail = HashMap::new();
         insert_apu_metric_details(
@@ -150,6 +169,17 @@ mod tests {
             detail.get("Throttle residency raw: prochot").map(String::as_str),
             Some("0")
         );
+    }
+
+    #[test]
+    fn vcn_busy_sysfs_reader_rejects_out_of_range_and_malformed_values() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("vcn_busy_percent"), "37\n").unwrap();
+        assert_eq!(read_vcn_busy_percent(dir.path()), Some(37));
+        std::fs::write(dir.path().join("vcn_busy_percent"), "101").unwrap();
+        assert_eq!(read_vcn_busy_percent(dir.path()), None);
+        std::fs::write(dir.path().join("vcn_busy_percent"), "N/A").unwrap();
+        assert_eq!(read_vcn_busy_percent(dir.path()), None);
     }
 
     #[test]
