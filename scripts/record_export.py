@@ -118,7 +118,7 @@ def iter_rows(stream: Iterable[str]) -> Iterator[dict[str, object]]:
                             continue
                     row = dict(metadata)
                     row.update(
-                        gap=False,
+                        gap=False if metadata["gap"] is not None else None,
                         hostname=device.get("hostname") or device.get("instance") or metadata["hostname"],
                         section=section,
                         device_id=str(device_id),
