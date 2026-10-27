@@ -245,7 +245,7 @@ async fn snapshot_uses_discrete_gpu_power_fallback() {
 #[tokio::test]
 async fn snapshot_does_not_add_apu_socket_power_to_chassis_total() {
     let mut gpu = mock_gpu("test-apu", 50.0, 55);
-    gpu.power_consumption = 15.7;
+    gpu.power_consumption = 2.0;
     gpu.detail
         .insert("socket_power_watts".to_string(), "15.700".to_string());
     let collector = Arc::new(MockCollector {

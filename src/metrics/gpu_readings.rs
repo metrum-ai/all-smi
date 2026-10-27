@@ -49,31 +49,24 @@ pub fn total_power_watts(gpus: &[GpuInfo]) -> f64 {
 /// Power that can safely serve as a chassis fallback, or `None` when no
 /// device-domain reading is available. APU socket-power fallback samples are
 /// excluded: they already describe the whole SoC and must not be added to
-/// discrete-device power or relabeled as a chassis total.
+/// discrete-device power or relabeled as a chassis total. Any row carrying the
+/// APU socket-power detail marker is excluded, including a GFX-only reading.
 pub fn chassis_power_watts(gpus: &[GpuInfo]) -> Option<f64> {
     let total: f64 = gpus
         .iter()
-        .filter(|gpu| !is_socket_power_fallback(gpu))
+        .filter(|gpu| {
+            !gpu.detail
+                .contains_key(crate::device::readers::detail_keys::SOCKET_POWER_WATTS_DETAIL_KEY)
+        })
         .filter_map(GpuInfo::power_consumption_reading)
         .sum();
     (total > 0.0).then_some(total)
 }
 
-/// PR #39 carries the whole-APU socket reading in this volatile detail key.
-/// The GPU power field equals that reading only when GFX-only power was not
-/// available; compare at the key's three-decimal serialization precision.
-fn is_socket_power_fallback(gpu: &GpuInfo) -> bool {
-    let Some(socket_power) = crate::device::readers::detail_keys::socket_power_watts(&gpu.detail)
-    else {
-        return false;
-    };
-    gpu.power_consumption_reading()
-        .is_some_and(|power| (power - socket_power).abs() <= 0.0005)
-}
-
 /// Add a GPU-sum fallback to chassis rows that have no platform reading.
-/// Socket-power samples are filtered by [`chassis_power_watts`], while
-/// unavailable multi-die rows are skipped by [`GpuInfo::power_consumption_reading`].
+/// APU rows carrying the socket-power detail marker are excluded by
+/// [`chassis_power_watts`], while unavailable multi-die rows are skipped by
+/// [`GpuInfo::power_consumption_reading`].
 pub fn inject_chassis_gpu_power(
     chassis_info: Vec<ChassisInfo>,
     gpu_info: &[GpuInfo],
@@ -301,10 +294,10 @@ mod tests {
             Some(120.0)
         );
 
-        // A distinct GFX-only value is device-scoped even when a separate
-        // socket reading is present, and can still contribute to the fallback.
+        // A GFX-only value still carries the APU socket-domain marker and is
+        // excluded from the chassis fallback by design.
         apu.power_consumption = 2.0;
-        assert_eq!(chassis_power_watts(&[apu]), Some(2.0));
+        assert_eq!(chassis_power_watts(&[apu]), None);
     }
 
     #[test]

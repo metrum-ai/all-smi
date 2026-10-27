@@ -832,13 +832,13 @@ Note: Storage metrics exclude Docker bind mounts and are filtered to show only r
 
 ### Chassis/Node-Level Metrics
 
-Chassis metrics provide visibility into system-wide power consumption, thermal conditions, and cooling status at the node level. Availability and meaning depend on the platform reader. Generic Linux readers use DMI and thermal zones rather than a BMC integration. If no platform chassis-power source is available, the existing GPU-sum fallback is retained for discrete device-power readings, skipping unavailable rows. On APUs where the GPU power field falls back to whole-socket power, that reading is excluded so socket power is not relabeled as chassis power or added to other devices.
+Chassis metrics provide visibility into system-wide power consumption, thermal conditions, and cooling status at the node level. Availability and meaning depend on the platform reader. Generic Linux readers use DMI and thermal zones rather than a BMC integration. If no platform chassis-power source is available, the existing GPU-sum fallback is retained for discrete device-power readings, skipping unavailable rows. Any APU GPU row carrying the whole-socket power detail marker is excluded from that fallback, even when its GPU power field contains GFX-only power, so socket power is not relabeled as chassis power or added to other devices.
 
 #### Common Chassis Metrics (All Platforms)
 
 | Metric                              | Description                                    | Unit    | Labels                  |
 |-------------------------------------|------------------------------------------------|---------|-------------------------|
-| `all_smi_chassis_power_watts`       | Platform-reported chassis/SoC power or an estimated sum of available discrete GPU device-power readings; omitted when neither is available or the only AMD APU reading is socket-scoped | watts | `hostname`, `instance` |
+| `all_smi_chassis_power_watts`       | Platform-reported chassis/SoC power or an estimated sum of available discrete GPU device-power readings; omitted when neither is available or no eligible discrete-device readings remain | watts | `hostname`, `instance` |
 
 #### Apple Silicon Chassis Metrics
 

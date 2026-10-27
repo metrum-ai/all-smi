@@ -743,8 +743,8 @@ pub struct MemoryInfo {
 
 /// Chassis/node-level information for system-wide metrics. When no platform
 /// source reports total power, a sum of available discrete GPU device-power
-/// readings may be used as an estimate. A GPU reading identified as whole-APU
-/// socket power is excluded from that fallback.
+/// readings may be used as an estimate. GPU rows carrying the whole-APU socket
+/// power detail marker are excluded from that fallback.
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct ChassisInfo {
     pub host_id: String,  // Host identifier (e.g., "10.82.128.41:9090")

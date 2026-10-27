@@ -6,8 +6,9 @@
 
 When no platform chassis-power source is available, the existing estimate from
 available discrete GPU device-power readings is retained. Unavailable GPU rows
-are skipped. On APUs, a GPU power value identified as whole-socket power is
-excluded so it is not relabeled as chassis power or added to another device.
+are skipped. Any APU GPU row carrying the socket-power detail marker is
+excluded, even when its primary power field contains GFX-only power, so it is
+not treated as discrete chassis power or added to another device.
 Platform-reported chassis power takes precedence. The same shared fallback
 helper is used by the API, snapshot, and local TUI collection paths. No RAPL or
 UMC perf counters are read by this change.
@@ -47,7 +48,8 @@ without an administrator's approval.
 ## Validation
 
 Tests verify that discrete GPU readings (including multi-device rows with
-unavailable dies) still provide the fallback, that APU socket power is excluded,
-and that platform-reported chassis power takes precedence. Workspace tests,
+unavailable dies) still provide the fallback, that APU rows carrying the socket
+power marker are excluded even when primary power is GFX-only, and that
+platform-reported chassis power takes precedence. Workspace tests,
 formatting, Clippy, and release-build results are recorded with the PR
 validation.
