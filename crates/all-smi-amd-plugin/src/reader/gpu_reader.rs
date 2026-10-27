@@ -325,6 +325,13 @@ impl GpuReader for AmdGpuReader {
 
             // Get system process info or use defaults
             let sys_proc = process_map.get(&gpu_proc.pid);
+            let cpu_percent = sys_proc.map(|p| p.cpu_percent).unwrap_or(0.0);
+            let memory_percent = sys_proc.map(|p| p.memory_percent).unwrap_or(0.0);
+            let Some((cpu_percent, memory_percent)) =
+                finite_process_percentages(cpu_percent, memory_percent)
+            else {
+                continue;
+            };
 
             let process_info = ProcessInfo {
                 device_id: gpu_proc.device_id,
@@ -332,8 +339,8 @@ impl GpuReader for AmdGpuReader {
                 pid: gpu_proc.pid,
                 process_name: gpu_proc.name,
                 used_memory: gpu_memory_bytes,
-                cpu_percent: sys_proc.map(|p| p.cpu_percent).unwrap_or(0.0),
-                memory_percent: sys_proc.map(|p| p.memory_percent).unwrap_or(0.0),
+                cpu_percent,
+                memory_percent,
                 memory_rss: sys_proc.map(|p| p.memory_rss).unwrap_or(0),
                 memory_vms: sys_proc.map(|p| p.memory_vms).unwrap_or(0),
                 user: sys_proc.map(|p| p.user.clone()).unwrap_or_default(),

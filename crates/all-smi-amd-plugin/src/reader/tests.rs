@@ -103,6 +103,13 @@ mod tests {
     }
 
     #[test]
+    fn non_finite_process_percentages_are_rejected_not_zeroed() {
+        assert_eq!(finite_process_percentages(0.0, 0.0), Some((0.0, 0.0)));
+        assert_eq!(finite_process_percentages(f64::NAN, 1.0), None);
+        assert_eq!(finite_process_percentages(1.0, f64::INFINITY), None);
+    }
+
+    #[test]
     fn test_gpu_metric_validation_constants() {
         // Test that validation constants are reasonable
         assert_eq!(MAX_GPU_UTILIZATION, 100.0, "Max utilization should be 100%");

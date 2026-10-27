@@ -15,6 +15,17 @@ group access displayed the CPU and GPU panels and 3/125 GB system memory, with
 no AMD plugin sampling error. The run was bounded to six seconds; load behavior
 was not measured.
 
+## Issue #32 — AMD plugin nullable metrics (Metrum AI, follow-up required)
+
+The blanket null-to-zero normalization has been removed. The AMD reader now
+omits process samples whose CPU or memory percentage is non-finite and emits a
+field-specific warning; typed ABI decode errors include the failing field path.
+
+A root `local` run on a Strix Halo (Radeon 8060S) test system did not reproduce
+a null-bearing plugin payload. No real root-null payload fixture is available,
+so issue #32 remains open pending reproduction and verification under the
+reported conditions.
+
 ## v0.28.1-metrum.1 — release validation in progress (Metrum AI)
 
 Merging upstream release tag v0.28.1 (`03e8fd0`) into fork main
