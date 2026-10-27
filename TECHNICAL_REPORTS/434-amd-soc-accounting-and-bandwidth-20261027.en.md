@@ -25,8 +25,10 @@ The `amd.rapl.access` doctor check reports package-energy access as unavailable
 when the current user cannot open `energy_uj`. Read-only inspection found the
 package counter owned by root with mode `0400`; the normal-user path did not
 open it. The check explains the administrator-managed dedicated-group opt-in
-and power side-channel risk. all-smi does not change permissions or install
-rules. The `amd.umc.bandwidth` doctor check reports system memory bandwidth as
+and power side-channel risk. A one-off root doctor invocation reported the
+single package counter readable; the normal-user invocation reported it
+unavailable. This verifies access only, not power measurement. all-smi does not
+change permissions or install rules. The `amd.umc.bandwidth` doctor check reports system memory bandwidth as
 unavailable, explains that system-wide PMU access requires `CAP_PERFMON` or an
 administrator-managed perf policy, and states that all-smi does not change
 kernel policy or request capabilities. A privileged implementation is out of

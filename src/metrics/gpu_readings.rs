@@ -63,11 +63,7 @@ pub fn chassis_power_watts(gpus: &[GpuInfo]) -> Option<f64> {
 /// The GPU power field equals that reading only when GFX-only power was not
 /// available; compare at the key's three-decimal serialization precision.
 fn is_socket_power_fallback(gpu: &GpuInfo) -> bool {
-    let Some(socket_power) = gpu
-        .detail
-        .get("socket_power_watts")
-        .and_then(|value| value.parse::<f64>().ok())
-        .filter(|value| value.is_finite() && *value >= 0.0)
+    let Some(socket_power) = crate::device::readers::detail_keys::socket_power_watts(&gpu.detail)
     else {
         return false;
     };
