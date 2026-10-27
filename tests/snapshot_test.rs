@@ -28,7 +28,7 @@ use std::time::Duration;
 use all_smi::cli::{SnapshotFormat, SnapshotIncludes};
 use all_smi::device::{ChassisInfo, CpuInfo, CpuPlatformType, GpuInfo, MemoryInfo, ProcessInfo};
 use all_smi::snapshot::{
-    SnapshotCollector, SnapshotHardFailure, SnapshotOptions, run_with_collector,
+    SnapshotCollector, SnapshotHardFailure, SnapshotOptions, collect_once, run_with_collector,
 };
 use all_smi::storage::info::StorageInfo;
 
@@ -219,6 +219,25 @@ async fn json_single_sample_contains_expected_schema() {
     assert!(parsed.get("processes").is_none());
     assert!(parsed.get("storage").is_none());
     let _ = fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn snapshot_does_not_infer_chassis_power_from_gpu_power() {
+    let collector = Arc::new(MockCollector {
+        gpus: vec![mock_gpu("test-gpu", 50.0, 55)],
+        chassis: vec![ChassisInfo::default()],
+        ..MockCollector::empty()
+    });
+    let includes = SnapshotIncludes {
+        gpu: true,
+        chassis: true,
+        ..Default::default()
+    };
+
+    let snapshot = collect_once(collector, &includes, Duration::from_secs(1)).await;
+    let chassis = snapshot.chassis.expect("requested chassis section");
+    assert_eq!(chassis.len(), 1);
+    assert_eq!(chassis[0].total_power_watts, None);
 }
 
 #[tokio::test]
