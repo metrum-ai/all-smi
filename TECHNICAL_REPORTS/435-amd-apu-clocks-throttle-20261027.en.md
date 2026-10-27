@@ -8,7 +8,7 @@ On AMD APU `gpu_metrics` v3 tables, the reader exports the reported time-filtere
 
 The reader also exports the `pp_dpm_sclk`, `pp_dpm_mclk`, `pp_dpm_fclk`, and `pp_dpm_socclk` frequency ranges when those sysfs files are readable. Indexed DPM formats include the current level; the SMU v14 min/current/max form is treated as named rows, so its ordinal is not exported as a DPM table level. Performance level, active power profile, and DPM details are cached for 10 seconds to avoid repeatedly issuing slow sysfs/SMU reads. `pp_power_profile_mode` formats with or without a colon are parsed when present; missing files remain absent.
 
-`gpu_metrics` v3 throttle-residency fields are exposed as cumulative Prometheus counters, with a `reason` label. They increase until reset or 32-bit wrap; the ABI does not document a portable unit, so consumers must not interpret them as seconds or percentages, and the reader does not convert them.
+`gpu_metrics` v3 throttle-residency fields are exposed as raw Prometheus gauges, with a `reason` label. The ABI does not document a portable unit or establish monotonicity, so consumers must not interpret them as seconds or percentages, and the reader does not convert them.
 
 ## Idle evidence and limits
 

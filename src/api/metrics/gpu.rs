@@ -743,9 +743,8 @@ impl<'a> GpuMetricExporter<'a> {
                 );
         }
 
-        // APU throttle-residency values are exposed as raw cumulative
-        // counters. The values increase until reset or u32 wrap; the
-        // gpu_metrics ABI does not document a portable unit.
+        // APU throttle-residency values are exposed as raw gauges. The
+        // gpu_metrics ABI does not document a portable unit or monotonicity.
 
         for (key, raw) in info.detail.iter().filter(|(key, _)| {
             key.starts_with(detail_keys::THROTTLE_RESIDENCY_RAW_DETAIL_KEY_PREFIX)
@@ -768,9 +767,9 @@ impl<'a> GpuMetricExporter<'a> {
             builder
                 .help(
                     "all_smi_gpu_throttle_residency_raw",
-                    "Cumulative raw AMD APU throttle-residency counter; monotonically increasing until reset or 32-bit wrap; unit is unspecified by the kernel ABI",
+                    "Raw AMD APU throttle-residency value; unit and monotonicity are unspecified by the kernel ABI",
                 )
-                .type_("all_smi_gpu_throttle_residency_raw", "counter")
+                .type_("all_smi_gpu_throttle_residency_raw", "gauge")
                 .metric("all_smi_gpu_throttle_residency_raw", &reason_labels, value);
         }
 
@@ -2008,8 +2007,8 @@ mod tests {
             .unwrap_or_else(|| panic!("throttle residency gauge missing:\n{output}"));
         assert!(throttle.contains("reason=\"spl\""));
         assert!(throttle.ends_with(" 94236815"));
-        assert!(output.contains("# TYPE all_smi_gpu_throttle_residency_raw counter"));
-        assert!(output.contains("monotonically increasing until reset or 32-bit wrap"));
+        assert!(output.contains("# TYPE all_smi_gpu_throttle_residency_raw gauge"));
+        assert!(output.contains("unit and monotonicity are unspecified"));
         assert!(output.contains("all_smi_gpu_clock_domain_dpm_current_level{"));
         assert!(output.contains("all_smi_gpu_clock_domain_dpm_min_mhz{"));
         assert!(output.contains("all_smi_gpu_clock_domain_dpm_max_mhz{"));
