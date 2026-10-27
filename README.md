@@ -95,6 +95,8 @@ Start an exporter on each node:
 
 ```bash
 all-smi api --port 9090
+# For a local-only exporter on a shared host:
+all-smi api --bind 127.0.0.1 --port 9090
 ```
 
 Connect from your workstation:
@@ -103,7 +105,7 @@ Connect from your workstation:
 all-smi view --hosts http://node1:9090 http://node2:9090
 ```
 
-Metrics are available at `http://node1:9090/metrics`. Keep exporters on a trusted network; use your firewall or an authenticated proxy to control access. For machines without an exporter, see [SSH monitoring](docs/usage.md#agentless-ssh-mode).
+Metrics are available at `http://node1:9090/metrics`. By default, the API listens on all interfaces; use `--bind 127.0.0.1` for loopback-only access on shared hosts. Keep network-facing exporters on a trusted network; use your firewall or an authenticated proxy to control access. For machines without an exporter, see [SSH monitoring](docs/usage.md#agentless-ssh-mode).
 
 ### Export or capture metrics
 

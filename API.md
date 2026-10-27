@@ -13,9 +13,14 @@ all-smi api --port 9090 --interval 5
 
 # Include process information
 all-smi api --port 9090 --processes
+
+# Bind only to loopback on a shared host
+all-smi api --bind 127.0.0.1 --port 9090
+# IPv6 loopback; --listen is an alias for --bind
+all-smi api --listen ::1 --port 9090
 ```
 
-Metrics are available at `http://localhost:9090/metrics`
+Metrics are available at `http://localhost:9090/metrics`. The default bind address is `0.0.0.0`; use `--bind 127.0.0.1` or `--bind ::1` to restrict the TCP listener to loopback. An `IP:port` value such as `--bind 127.0.0.1:9090` is also accepted; its port takes precedence over `--port`.
 
 ### Unix Domain Socket Support (Unix Only)
 

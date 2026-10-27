@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 
@@ -114,6 +116,37 @@ pub enum Commands {
     Service(ServiceArgs),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ApiBindAddress {
+    Ip(IpAddr),
+    Socket(SocketAddr),
+}
+
+impl FromStr for ApiBindAddress {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if let Ok(address) = value.parse::<SocketAddr>() {
+            return Ok(Self::Socket(address));
+        }
+        if let Ok(ip) = value.parse::<IpAddr>() {
+            return Ok(Self::Ip(ip));
+        }
+        Err(format!(
+            "invalid bind address {value:?}; expected an IP address or IP:port"
+        ))
+    }
+}
+
+impl ApiBindAddress {
+    pub fn to_socket_addr(&self, port: u16) -> SocketAddr {
+        match self {
+            Self::Ip(ip) => SocketAddr::new(*ip, port),
+            Self::Socket(address) => *address,
+        }
+    }
+}
+
 #[derive(Parser, Clone)]
 pub struct ApiArgs {
     /// The port to listen on for the API server. Use 0 to disable TCP listener.
@@ -122,6 +155,10 @@ pub struct ApiArgs {
     /// `ALL_SMI_API_PORT` env var, or the compiled default (9090).
     #[arg(short, long)]
     pub port: Option<u16>,
+    /// Local IP address or IP:port to bind the TCP listener to (default: 0.0.0.0).
+    /// When IP:port is supplied, its port overrides --port. Alias: --listen.
+    #[arg(long, alias = "listen")]
+    pub bind: Option<ApiBindAddress>,
     /// The interval in seconds at which to update the GPU information.
     ///
     /// When omitted, value is taken from the config file, the
@@ -674,6 +711,48 @@ pub fn build_command_with_runtime_help() -> clap::Command {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn api_bind_accepts_ipv4_ipv6_socket_addresses_and_alias() {
+        let ipv4 = Cli::try_parse_from(["all-smi", "api", "--bind", "127.0.0.1", "--port", "0"])
+            .expect("parse IPv4 bind");
+        let Commands::Api(args) = ipv4.command.unwrap() else {
+            panic!("expected API command");
+        };
+        assert_eq!(
+            args.bind.unwrap().to_socket_addr(0),
+            "127.0.0.1:0".parse::<SocketAddr>().unwrap()
+        );
+
+        let ipv6 = Cli::try_parse_from(["all-smi", "api", "--listen", "[::1]:8123"])
+            .expect("parse IPv6 socket address");
+        let Commands::Api(args) = ipv6.command.unwrap() else {
+            panic!("expected API command");
+        };
+        assert_eq!(
+            args.bind.unwrap().to_socket_addr(9090),
+            "[::1]:8123".parse::<SocketAddr>().unwrap()
+        );
+    }
+
+    #[test]
+    fn invalid_api_bind_address_is_rejected_during_cli_parsing() {
+        assert!(Cli::try_parse_from(["all-smi", "api", "--bind", "not-an-address"]).is_err());
+    }
+
+    #[tokio::test]
+    async fn api_bind_port_zero_binds_to_loopback() {
+        let cli = Cli::try_parse_from(["all-smi", "api", "--bind", "127.0.0.1", "--port", "0"])
+            .expect("parse loopback listener");
+        let Commands::Api(args) = cli.command.unwrap() else {
+            panic!("expected API command");
+        };
+        let listener =
+            tokio::net::TcpListener::bind(args.bind.unwrap().to_socket_addr(args.port.unwrap()))
+                .await
+                .expect("bind loopback listener");
+        assert!(listener.local_addr().unwrap().ip().is_loopback());
+    }
 
     #[test]
     fn hide_storage_defaults_to_false_for_local_and_view() {

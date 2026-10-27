@@ -659,6 +659,7 @@ async fn run_command(cli: Cli, settings: Settings) {
                 "api" => {
                     let api_args = cli::ApiArgs {
                         port: None,
+                        bind: None,
                         interval: None,
                         processes: None,
                         #[cfg(unix)]
