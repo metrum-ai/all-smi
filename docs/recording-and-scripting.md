@@ -86,12 +86,19 @@ metadata, plus a header frame and sparse index frames every 1000 data frames
 to enable fast seeking. The header declares `recording_schema: 2`; the nested
 snapshot payload remains schema 1 so existing replay and snapshot readers can
 ignore the additional top-level fields. Frame timestamps use RFC3339 UTC with
-millisecond precision. `seq`, `interval_ms`, `lag_ms`, `missed_intervals`, and
-`gap` make the schedule observable; `gap: true` marks an unavailable remote
-scrape or one or more missed schedule boundaries, while `lag_ms` reports
-sub-interval lateness. The header's `units` object declares units for the
-standard numeric fields; unknown or vendor-specific fields remain as emitted
-by their source.
+millisecond precision and identify the scheduled tick (not the completion time
+of collection). `seq`, `interval_ms`, `lag_ms`, `missed_intervals`, and `gap`
+make the schedule observable; `gap: true` marks a failed or unavailable sample
+(source errors are retained per host/section), while `missed_intervals` counts
+schedule boundaries crossed even when the current frame contains data.
+`lag_ms` reports sub-interval lateness. The header's `units` object declares
+units for the standard numeric fields. Rotation writes a header and unit map
+for each segment so retained segments remain independently interpretable.
+
+`--interval` accepts integers with optional `ms` or `s` suffixes, has a 100ms
+minimum, and does not accept fractional seconds. Bare `--interval 0` retains
+the legacy one-second interval. Remote source polling remains limited to whole
+seconds even when output frames are scheduled more frequently.
 
 ```bash
 # Capture 30 seconds of local hardware state to a zstd-compressed file.

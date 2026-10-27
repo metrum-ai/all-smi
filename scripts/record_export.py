@@ -1,5 +1,18 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 Metrum AI. All rights reserved.
+# Copyright 2026 Metrum AI
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Export all-smi NDJSON recordings as normalized CSV or Parquet.
 
 For zstd recordings, pipe decompressed NDJSON on stdin (for example,
@@ -14,7 +27,9 @@ import csv
 import gzip
 import json
 import math
+import os
 import sys
+import tempfile
 from typing import IO, Iterable, Iterator
 
 
@@ -35,6 +50,16 @@ FIELDS = [
 ]
 SECTIONS = ("gpus", "cpus", "memory", "chassis", "processes", "storage")
 IDENTIFIER_FIELDS = {"index", "device_id", "pid", "ppid"}
+GPU_UNAVAILABLE_NEGATIVE_FIELDS = {"utilization", "ane_utilization", "power_consumption"}
+GPU_UNAVAILABLE_ZERO_FIELDS = {"temperature", "frequency"}
+
+
+def is_gpu_placeholder(metric: str, value: int | float) -> bool:
+    if metric in GPU_UNAVAILABLE_NEGATIVE_FIELDS:
+        return value < 0
+    if metric in GPU_UNAVAILABLE_ZERO_FIELDS:
+        return value == 0
+    return False
 
 
 def iter_rows(stream: Iterable[str]) -> Iterator[dict[str, object]]:
@@ -60,7 +85,7 @@ def iter_rows(stream: Iterable[str]) -> Iterator[dict[str, object]]:
             "interval_ms": frame.get("interval_ms"),
             "lag_ms": frame.get("lag_ms"),
             "missed_intervals": frame.get("missed_intervals"),
-            "gap": bool(frame.get("gap", False)),
+            "gap": frame.get("gap"),
             "hostname": frame.get("hostname", ""),
         }
         emitted = False
@@ -82,8 +107,11 @@ def iter_rows(stream: Iterable[str]) -> Iterator[dict[str, object]]:
                         continue
                     if isinstance(value, float) and not math.isfinite(value):
                         continue
+                    if section == "gpus" and is_gpu_placeholder(metric, value):
+                        continue
                     row = dict(metadata)
                     row.update(
+                        hostname=device.get("hostname") or device.get("instance") or metadata["hostname"],
                         section=section,
                         device_id=str(device_id),
                         device_name=str(device_name),
@@ -119,7 +147,8 @@ def open_input(path: str) -> IO[str]:
 def write_csv(rows: Iterable[dict[str, object]], output: IO[str]) -> None:
     writer = csv.DictWriter(output, fieldnames=FIELDS, extrasaction="ignore")
     writer.writeheader()
-    writer.writerows(rows)
+    for row in rows:
+        writer.writerow({key: str(value).lower() if isinstance(value, bool) else value for key, value in row.items()})
 
 
 def write_parquet(rows: Iterable[dict[str, object]], output_path: str) -> None:
@@ -146,18 +175,29 @@ def write_parquet(rows: Iterable[dict[str, object]], output_path: str) -> None:
             ("unit", pa.string()),
         ]
     )
-    parquet = pq.ParquetWriter(output_path, schema)
-    batch: list[dict[str, object]] = []
+    output_dir = os.path.dirname(os.path.abspath(output_path))
+    fd, temp_path = tempfile.mkstemp(prefix=".record-export-", suffix=".parquet", dir=output_dir)
+    os.close(fd)
     try:
-        for row in rows:
-            batch.append(row)
-            if len(batch) >= 4096:
+        parquet = pq.ParquetWriter(temp_path, schema)
+        batch: list[dict[str, object]] = []
+        try:
+            for row in rows:
+                batch.append(row)
+                if len(batch) >= 4096:
+                    parquet.write_table(pa.Table.from_pylist(batch, schema=schema))
+                    batch.clear()
+            if batch:
                 parquet.write_table(pa.Table.from_pylist(batch, schema=schema))
-                batch.clear()
-        if batch:
-            parquet.write_table(pa.Table.from_pylist(batch, schema=schema))
-    finally:
-        parquet.close()
+        finally:
+            parquet.close()
+        os.replace(temp_path, output_path)
+    except Exception:
+        try:
+            os.unlink(temp_path)
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -528,8 +528,10 @@ pub struct RecordArgs {
     )]
     pub output: Option<PathBuf>,
 
-    /// Interval between frames. Accepts a bare integer in seconds or a
-    /// duration such as `250ms`, `1s`, or `5s`.
+    /// Interval between frames. Minimum 100ms; accepts a bare integer in
+    /// seconds or a duration such as `250ms`, `1s`, or `5s`. Bare `0` keeps
+    /// the legacy one-second interval. Fractional seconds are not accepted;
+    /// remote source polling remains limited to whole seconds.
     #[arg(long, short = 'i', default_value = "3s")]
     pub interval: String,
 

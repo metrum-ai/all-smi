@@ -184,6 +184,9 @@ pub struct RotatingWriter {
     /// Keep track of rotated segment paths in chronological order (oldest
     /// first) so we can evict the head cheaply. Bounded by `max_files - 1`.
     rotated_segments: Vec<PathBuf>,
+    /// Recording header repeated after each rollover so every retained
+    /// segment carries its own schema and units metadata.
+    rotation_header: Option<Vec<u8>>,
 }
 
 impl RotatingWriter {
@@ -215,6 +218,7 @@ impl RotatingWriter {
             active_bytes: 0,
             next_rollover_index: 1,
             rotated_segments: Vec::new(),
+            rotation_header: None,
         })
     }
 
@@ -234,8 +238,18 @@ impl RotatingWriter {
 
         if self.max_size > 0 && self.active_bytes >= self.max_size {
             self.rollover()?;
+            if let Some(header) = self.rotation_header.as_deref() {
+                let segment = self.active.as_mut().expect("rollover opens a segment");
+                segment.write_all(header)?;
+                self.active_bytes = header.len() as u64;
+            }
         }
         Ok(())
+    }
+
+    /// Set the header line to copy into each newly opened segment.
+    pub fn set_rotation_header(&mut self, header: &[u8]) {
+        self.rotation_header = Some(header.to_vec());
     }
 
     /// Roll the active segment out and open a fresh one.
@@ -500,6 +514,33 @@ mod tests {
         let mut s = String::new();
         dec.read_to_string(&mut s).unwrap();
         assert_eq!(s, "hello\nworld\n");
+    }
+
+    #[test]
+    fn each_rotated_segment_starts_with_the_recording_header() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rec.ndjson");
+        let mut writer = RotatingWriter::new(&path, Codec::Plain, 40, 4).unwrap();
+        let header = b"{\"header\":true}\n";
+        writer.set_rotation_header(header);
+        writer.write_line(header).unwrap();
+        for seq in 0..5 {
+            writer
+                .write_line(format!("{{\"seq\":{seq}}}\n").as_bytes())
+                .unwrap();
+        }
+        writer.finish().unwrap();
+
+        let segments: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with("rec"))
+            .collect();
+        assert!(segments.len() > 1);
+        for segment in segments {
+            let content = std::fs::read_to_string(segment.path()).unwrap();
+            assert!(content.lines().next().unwrap().contains("\"header\":true"));
+        }
     }
 
     #[test]

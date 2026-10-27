@@ -274,6 +274,7 @@ async fn run_remote(opts: RecorderOptions, stop: Arc<AtomicBool>) -> Result<()> 
         match collector.collect(&config).await {
             Ok(data) => {
                 let mut snap = snapshot_from_collection_data(&data, &opts);
+                let host_gap = append_remote_host_errors(&mut snap, &data.connection_statuses);
                 snap.timestamp = tick.timestamp.clone();
                 write_data_frame(
                     &mut writer,
@@ -282,7 +283,7 @@ async fn run_remote(opts: RecorderOptions, stop: Arc<AtomicBool>) -> Result<()> 
                     opts.interval.as_millis() as u64,
                     tick.lag_ms,
                     tick.missed_intervals,
-                    tick.missed_intervals > 0,
+                    host_gap || !snap.errors.is_empty(),
                 )?;
             }
             Err(e) => {
@@ -342,7 +343,7 @@ where
             opts.interval.as_millis() as u64,
             tick.lag_ms,
             tick.missed_intervals,
-            tick.missed_intervals > 0,
+            !snap.errors.is_empty(),
         )?;
         frame_seq = frame_seq.saturating_add(1);
         tick_index = tick_index.saturating_add(tick.missed_intervals.saturating_add(1));
@@ -499,6 +500,7 @@ fn write_header(
     });
     let mut line = serde_json::to_string(&header).context("failed to serialize header frame")?;
     line.push('\n');
+    writer.set_rotation_header(line.as_bytes());
     writer.write_line(line.as_bytes())?;
     Ok(())
 }
@@ -546,6 +548,28 @@ fn write_data_frame(
         writer.write_line(line.as_bytes())?;
     }
     Ok(())
+}
+
+fn append_remote_host_errors(
+    snapshot: &mut Snapshot,
+    statuses: &[crate::app_state::ConnectionStatus],
+) -> bool {
+    let mut has_gap = false;
+    for status in statuses.iter().filter(|status| !status.is_connected) {
+        has_gap = true;
+        snapshot.errors.push(SnapshotError {
+            section: format!("remote host {}", status.host_id),
+            kind: status
+                .connection_state
+                .clone()
+                .unwrap_or_else(|| "unreachable".to_string()),
+            message: status
+                .last_error
+                .clone()
+                .unwrap_or_else(|| "host did not return data".to_string()),
+        });
+    }
+    has_gap
 }
 
 fn remote_gap_snapshot(timestamp: &str) -> Snapshot {
@@ -631,9 +655,13 @@ fn install_signal_handlers(stop: Arc<AtomicBool>) {
 }
 
 /// Parse the fixed interval accepted by `record --interval`. Bare integers
-/// are seconds; `ms` and `s` suffixes make sub-second sampling explicit.
+/// are seconds; `ms` and `s` suffixes are accepted. A bare `0` retains the
+/// legacy one-second default. Fractional seconds are intentionally rejected.
 fn parse_interval(s: &str) -> Result<Duration> {
     let trimmed = s.trim();
+    if trimmed == "0" {
+        return Ok(Duration::from_secs(1));
+    }
     let (number, multiplier) = if let Some(value) = trimmed.strip_suffix("ms") {
         (value, 1_u64)
     } else if let Some(value) = trimmed.strip_suffix('s') {
@@ -647,8 +675,8 @@ fn parse_interval(s: &str) -> Result<Duration> {
     let millis = value
         .checked_mul(multiplier)
         .ok_or_else(|| anyhow!("interval `{trimmed}` is too large"))?;
-    if millis == 0 {
-        bail!("interval must be greater than 0ms");
+    if millis < 100 {
+        bail!("interval must be at least 100ms");
     }
     Ok(Duration::from_millis(millis))
 }
@@ -749,6 +777,21 @@ mod tests {
     }
 
     #[test]
+    fn disconnected_remote_hosts_add_per_host_gap_errors() {
+        let mut status = crate::app_state::ConnectionStatus::new(
+            "node-b:9090".to_string(),
+            "http://node-b:9090".to_string(),
+        );
+        status.mark_failure("connection refused".to_string());
+        let mut snapshot = Snapshot::new("remote".to_string());
+
+        assert!(append_remote_host_errors(&mut snapshot, &[status]));
+        assert_eq!(snapshot.errors.len(), 1);
+        assert_eq!(snapshot.errors[0].section, "remote host node-b:9090");
+        assert_eq!(snapshot.errors[0].message, "connection refused");
+    }
+
+    #[test]
     fn recording_header_and_frames_declare_units_and_gap_metadata() {
         let directory = tempfile::tempdir().unwrap();
         let output = directory.path().join("recording.ndjson");
@@ -794,13 +837,15 @@ mod tests {
         assert_eq!(parse_interval("250ms").unwrap(), Duration::from_millis(250));
         assert_eq!(parse_interval("1s").unwrap(), Duration::from_secs(1));
         assert_eq!(parse_interval("3").unwrap(), Duration::from_secs(3));
+        assert_eq!(parse_interval("0").unwrap(), Duration::from_secs(1));
     }
 
     #[test]
-    fn parse_interval_rejects_zero_and_invalid_values() {
+    fn parse_interval_rejects_values_below_floor_and_invalid_units() {
         assert!(parse_interval("0ms").is_err());
-        assert!(parse_interval("0").is_err());
+        assert!(parse_interval("99ms").is_err());
         assert!(parse_interval("1us").is_err());
+        assert!(parse_interval("0.5s").is_err());
     }
 
     #[test]
