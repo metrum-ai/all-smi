@@ -870,6 +870,23 @@ Chassis metrics provide visibility into system-wide power consumption, thermal c
 |-------------------------------------|------------------------------------------------|---------|-------------------------|
 | `all_smi_chassis_power_watts`       | Platform-reported chassis/SoC power or an estimated sum of available discrete GPU device-power readings; omitted when neither is available or no eligible discrete-device readings remain | watts | `hostname`, `instance` |
 
+#### AMD APU System DRAM Bandwidth
+
+When AMD APU `gpu_metrics` provides its time-filtered DRAM read/write bandwidth,
+all-smi exports these as system-memory-domain readings, separate from GPU engine
+utilization and from UMC/DF PMU counters. The driver fields are decimal MB/s and
+are converted to bytes/s. `source_device` identifies the APU supplying the
+reading; do not interpret these as per-GPU VRAM bandwidth or sum duplicate
+sources. The underlying fields are `u16`, so each direction has an encoding
+ceiling of 65,535 MB/s; values at that ceiling cannot represent higher traffic.
+These are source-reported readings, not a guarantee of complete aggregate
+system bandwidth.
+
+| Metric                                          | Description                    | Unit  | Labels                                       |
+|-------------------------------------------------|--------------------------------|-------|----------------------------------------------|
+| `all_smi_system_dram_read_bytes_per_second`     | System DRAM read bandwidth     | bytes/s | `hostname`, `instance`, `source`, `source_device` |
+| `all_smi_system_dram_write_bytes_per_second`    | System DRAM write bandwidth    | bytes/s | `hostname`, `instance`, `source`, `source_device` |
+
 #### Apple Silicon Chassis Metrics
 
 | Metric                                   | Description                               | Unit    | Labels                           |

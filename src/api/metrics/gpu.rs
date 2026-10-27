@@ -160,6 +160,51 @@ impl<'a> GpuMetricExporter<'a> {
                 .metric("all_smi_gpu_memory_gtt_total_bytes", &base_labels, total);
         }
 
+        // AMD APU gpu_metrics v3 reports system DRAM bandwidth in decimal
+        // MB/s. These host-memory readings have a separate family from GPU
+        // activity and use the APU as a labeled source, not as the bandwidth
+        // domain. UMC PMU readings remain a distinct privileged source.
+        let system_dram_labels = [
+            ("hostname", info.hostname.as_str()),
+            ("instance", info.instance.as_str()),
+            ("source", "amd_gpu_metrics"),
+            ("source_device", info.uuid.as_str()),
+        ];
+        if let Some(read_bytes_per_second) = info
+            .detail
+            .get(detail_keys::SYSTEM_DRAM_READ_BYTES_PER_SECOND_DETAIL_KEY)
+            .and_then(|value| value.parse::<u64>().ok())
+        {
+            builder
+                .help(
+                    "all_smi_system_dram_read_bytes_per_second",
+                    "System DRAM read bandwidth in bytes per second",
+                )
+                .type_("all_smi_system_dram_read_bytes_per_second", "gauge")
+                .metric(
+                    "all_smi_system_dram_read_bytes_per_second",
+                    &system_dram_labels,
+                    read_bytes_per_second,
+                );
+        }
+        if let Some(write_bytes_per_second) = info
+            .detail
+            .get(detail_keys::SYSTEM_DRAM_WRITE_BYTES_PER_SECOND_DETAIL_KEY)
+            .and_then(|value| value.parse::<u64>().ok())
+        {
+            builder
+                .help(
+                    "all_smi_system_dram_write_bytes_per_second",
+                    "System DRAM write bandwidth in bytes per second",
+                )
+                .type_("all_smi_system_dram_write_bytes_per_second", "gauge")
+                .metric(
+                    "all_smi_system_dram_write_bytes_per_second",
+                    &system_dram_labels,
+                    write_bytes_per_second,
+                );
+        }
+
         // Free memory, the third figure of the family above: the Gaudi
         // reader writes the live reading under `detail` in mebibytes, taken
         // from hl-smi's own CSV column, so it is read back through the
@@ -1274,6 +1319,41 @@ mod tests {
             !output.contains("all_smi_gpu_memory_total_bytes{"),
             "{output}"
         );
+    }
+
+    #[test]
+    fn system_dram_bandwidth_is_exported_as_a_separate_source_domain() {
+        let mut gpu = make_nvidia_gpu();
+        gpu.detail.insert(
+            detail_keys::SYSTEM_DRAM_READ_BYTES_PER_SECOND_DETAIL_KEY.to_string(),
+            "18938000000".to_string(),
+        );
+        gpu.detail.insert(
+            detail_keys::SYSTEM_DRAM_WRITE_BYTES_PER_SECOND_DETAIL_KEY.to_string(),
+            "9393000000".to_string(),
+        );
+
+        let output = GpuMetricExporter::new(&[gpu]).export_metrics();
+        let read = output
+            .lines()
+            .find(|line| line.starts_with("all_smi_system_dram_read_bytes_per_second{"))
+            .expect("DRAM read bandwidth series");
+        assert!(read.contains("hostname=\"node-1\""), "{read}");
+        assert!(read.contains("source=\"amd_gpu_metrics\""), "{read}");
+        assert!(read.ends_with(" 18938000000"), "{read}");
+        assert!(output.contains("all_smi_system_dram_write_bytes_per_second{"));
+        assert!(!output.contains("all_smi_gpu_memory_bandwidth_utilization"));
+    }
+
+    #[test]
+    fn malformed_system_dram_bandwidth_detail_is_omitted() {
+        let mut gpu = make_nvidia_gpu();
+        gpu.detail.insert(
+            detail_keys::SYSTEM_DRAM_READ_BYTES_PER_SECOND_DETAIL_KEY.to_string(),
+            "unknown".to_string(),
+        );
+        let output = GpuMetricExporter::new(&[gpu]).export_metrics();
+        assert!(!output.contains("all_smi_system_dram_read_bytes_per_second{"));
     }
 
     /// Issue #378: a Windows WMI baseline must keep an unsourced field
