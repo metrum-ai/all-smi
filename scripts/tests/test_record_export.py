@@ -66,7 +66,16 @@ class RecordExportTests(unittest.TestCase):
         rows = list(record_export.iter_rows(stream))
         self.assertEqual([row["metric"] for row in rows], ["used_memory"])
         self.assertEqual(rows[0]["hostname"], "node-a")
-        self.assertFalse(rows[0]["gap"])
+        self.assertIsNone(rows[0]["gap"])
+
+    def test_legacy_recording_exports_empty_gap_instead_of_false(self) -> None:
+        rows = list(record_export.iter_rows(['{"hostname":"node-a","gpus":[{"uuid":"gpu-0","utilization":42}]}']))
+        self.assertEqual(len(rows), 1)
+        self.assertIsNone(rows[0]["gap"])
+        output = io.StringIO()
+        record_export.write_csv(iter(rows), output)
+        import csv
+        self.assertEqual(list(csv.DictReader(io.StringIO(output.getvalue())))[0]["gap"], "")
 
     def test_partial_remote_gap_is_host_scoped_and_memory_placeholders_are_filtered(self) -> None:
         stream = io.StringIO(
