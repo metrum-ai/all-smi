@@ -69,11 +69,6 @@ fn metrics_socket_power_watts(format_revision: u8, raw: u32) -> Option<f64> {
     Some(watts.clamp(0.0, MAX_GPU_POWER_WATTS))
 }
 
-/// Convert a `libamdgpu_top` hwmon power reading to watts.
-///
-/// `HwmonPower::value` is already whole watts: `libamdgpu_top` divides the
-/// kernel's microwatt `power1_average` / `power1_input` by 1,000,000 before
-/// handing it over. Dividing again reported an MI300X drawing 148 W as 0.148.
 fn apu_gfx_power_watts(format_revision: u8, raw_mw: u32) -> Option<f64> {
     matches!(format_revision, 2 | 3)
         .then(|| metrics_socket_power_watts(format_revision, raw_mw))
@@ -94,6 +89,11 @@ fn read_gtt_memory_bytes(sysfs_path: &std::path::Path) -> Option<(u64, u64)> {
     (used <= total).then_some((used, total))
 }
 
+/// Convert a `libamdgpu_top` hwmon power reading to watts.
+///
+/// `HwmonPower::value` is already whole watts: `libamdgpu_top` divides the
+/// kernel's microwatt `power1_average` / `power1_input` by 1,000,000 before
+/// handing it over. Dividing again reported an MI300X drawing 148 W as 0.148.
 fn hwmon_power_watts(value: u32) -> f64 {
     f64::from(value).clamp(0.0, MAX_GPU_POWER_WATTS)
 }

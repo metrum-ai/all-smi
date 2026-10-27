@@ -480,11 +480,7 @@ pub fn is_volatile_detail_key(key: &str) -> bool {
         .any(|prefix| label.starts_with(prefix.as_str()))
 }
 
-/// The board power carried under [`CARD_POWER_WATTS_DETAIL_KEY`], or `None`
-/// when the key is absent or does not hold a finite, non-negative number.
-///
-/// The value can arrive from a remote node's `all_smi_gpu_info` labels, so
-/// it is validated here rather than trusted.
+/// Whole-APU socket power in watts, or `None` for an absent or invalid value.
 pub fn socket_power_watts(detail: &HashMap<String, String>) -> Option<f64> {
     detail
         .get(SOCKET_POWER_WATTS_DETAIL_KEY)?
@@ -507,6 +503,11 @@ pub fn gtt_memory_bytes(detail: &HashMap<String, String>, key: &str) -> Option<u
     detail_bytes(detail.get(key)?)
 }
 
+/// Board power carried under [`CARD_POWER_WATTS_DETAIL_KEY`], or `None` when
+/// the key is absent or does not hold a finite, non-negative number.
+///
+/// The value can arrive from a remote node's `all_smi_gpu_info` labels, so it
+/// is validated here rather than trusted.
 pub fn card_power_watts(detail: &HashMap<String, String>) -> Option<f64> {
     detail
         .get(CARD_POWER_WATTS_DETAIL_KEY)?

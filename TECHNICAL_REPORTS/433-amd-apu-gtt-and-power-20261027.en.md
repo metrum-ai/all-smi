@@ -1,3 +1,5 @@
+<!-- Copyright (c) 2026 Metrum AI. All rights reserved. -->
+
 # AMD APU telemetry
 
 ## Shared memory and power readings
