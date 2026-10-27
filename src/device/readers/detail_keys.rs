@@ -230,6 +230,11 @@ pub const ENGINE_DETAIL_KEY_PREFIX: &str = "Engine: ";
 /// touching.
 pub const FREQUENCY_DOMAIN_DETAIL_KEY_PREFIX: &str = "Frequency: ";
 
+/// Prefix for raw APU throttle-residency counters from `gpu_metrics` v3.
+/// Their unit is not documented by the kernel ABI, so consumers must not
+/// label them as seconds or percentages.
+pub const THROTTLE_RESIDENCY_RAW_DETAIL_KEY_PREFIX: &str = "Throttle residency raw: ";
+
 /// Key prefixes whose runtime-built key families are continuously varying
 /// measurements, and which therefore must not become labels on
 /// `all_smi_gpu_info`.
@@ -253,8 +258,11 @@ pub const FREQUENCY_DOMAIN_DETAIL_KEY_PREFIX: &str = "Frequency: ";
 /// * `Frequency: ` (Intel Level Zero):
 ///   `all_smi_gpu_clock_domain_current_mhz`, one row per clock domain,
 ///   keyed by the `domain` label carrying the domain name.
-pub const VOLATILE_DETAIL_KEY_PREFIXES: &[&str] =
-    &[ENGINE_DETAIL_KEY_PREFIX, FREQUENCY_DOMAIN_DETAIL_KEY_PREFIX];
+pub const VOLATILE_DETAIL_KEY_PREFIXES: &[&str] = &[
+    ENGINE_DETAIL_KEY_PREFIX,
+    FREQUENCY_DOMAIN_DETAIL_KEY_PREFIX,
+    THROTTLE_RESIDENCY_RAW_DETAIL_KEY_PREFIX,
+];
 
 /// Detail keys whose value is a continuously varying measurement, and which
 /// therefore must not become labels on `all_smi_gpu_info`.

@@ -129,6 +129,30 @@ mod tests {
     }
 
     #[test]
+    fn apu_gpu_metrics_publish_clocks_vcn_and_raw_throttle_residency() {
+        let mut detail = HashMap::new();
+        insert_apu_metric_details(
+            &mut detail,
+            &[("GFX", Some(611)), ("SOC", Some(602)), ("IPUCLK", Some(0))],
+            Some(0),
+            &[("spl", Some(94_236_815)), ("prochot", Some(0))],
+        );
+
+        assert_eq!(detail.get("Frequency: GFX").map(String::as_str), Some("611"));
+        assert_eq!(detail.get("Frequency: SOC").map(String::as_str), Some("602"));
+        assert!(!detail.contains_key("Frequency: IPUCLK"));
+        assert_eq!(detail.get("Engine: VCN").map(String::as_str), Some("0"));
+        assert_eq!(
+            detail.get("Throttle residency raw: spl").map(String::as_str),
+            Some("94236815")
+        );
+        assert_eq!(
+            detail.get("Throttle residency raw: prochot").map(String::as_str),
+            Some("0")
+        );
+    }
+
+    #[test]
     fn gtt_memory_sysfs_reader_accepts_valid_byte_counters() {
         let dir = tempfile::tempdir().expect("temporary sysfs directory");
         std::fs::write(dir.path().join("mem_info_gtt_used"), "4096\n").unwrap();

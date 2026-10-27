@@ -709,6 +709,36 @@ impl<'a> GpuMetricExporter<'a> {
                 );
         }
 
+        // APU throttle-residency values are exposed as raw kernel counters.
+        // The gpu_metrics ABI does not document a portable time unit, so do
+        // not label or convert these values as seconds or percentages.
+        for (key, raw) in info.detail.iter().filter(|(key, _)| {
+            key.starts_with(detail_keys::THROTTLE_RESIDENCY_RAW_DETAIL_KEY_PREFIX)
+        }) {
+            let Some(value) = detail_keys::leading_number(raw) else {
+                continue;
+            };
+            let Some(reason) =
+                key.strip_prefix(detail_keys::THROTTLE_RESIDENCY_RAW_DETAIL_KEY_PREFIX)
+            else {
+                continue;
+            };
+            let reason_labels = [
+                ("gpu", info.name.as_str()),
+                ("instance", info.instance.as_str()),
+                ("gpu_uuid", info.uuid.as_str()),
+                ("gpu_index", row.index_str.as_str()),
+                ("reason", reason),
+            ];
+            builder
+                .help(
+                    "all_smi_gpu_throttle_residency_raw",
+                    "Raw AMD APU throttle-residency counter; unit is unspecified by the kernel ABI",
+                )
+                .type_("all_smi_gpu_throttle_residency_raw", "gauge")
+                .metric("all_smi_gpu_throttle_residency_raw", &reason_labels, value);
+        }
+
         // Power limit metrics
         if let Some(power_limit) = info.detail.get("power_limit_current")
             && let Ok(power) = power_limit.parse::<f64>()
@@ -1803,6 +1833,10 @@ mod tests {
             .insert("Engine: compute (L0)".to_string(), "8.00%".to_string());
         gpu.detail
             .insert("Frequency: gpu (L0)".to_string(), "2400 MHz".to_string());
+        gpu.detail.insert(
+            "Throttle residency raw: spl".to_string(),
+            "94236815".to_string(),
+        );
 
         let output = GpuMetricExporter::new(&[gpu]).export_metrics();
 
@@ -1836,6 +1870,13 @@ mod tests {
         );
         assert!(domain.ends_with(" 2400"), "expected 2400 MHz, got {domain}");
 
+        let throttle = output
+            .lines()
+            .find(|l| l.starts_with("all_smi_gpu_throttle_residency_raw{"))
+            .unwrap_or_else(|| panic!("throttle residency gauge missing:\n{output}"));
+        assert!(throttle.contains("reason=\"spl\""));
+        assert!(throttle.ends_with(" 94236815"));
+
         let info = output
             .lines()
             .find(|l| l.starts_with("all_smi_gpu_info{"))
@@ -1847,6 +1888,10 @@ mod tests {
         assert!(
             !info.contains("frequency__gpu"),
             "a runtime-built clock key reached the identity series: {info}"
+        );
+        assert!(
+            !info.contains("throttle_residency"),
+            "a raw residency reading reached the identity series: {info}"
         );
     }
 

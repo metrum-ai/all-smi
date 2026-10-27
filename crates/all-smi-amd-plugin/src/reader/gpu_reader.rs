@@ -167,6 +167,31 @@ impl GpuReader for AmdGpuReader {
                                 total.to_string(),
                             );
                         }
+                        if header.format_revision == 3 {
+                            insert_apu_metric_details(
+                                &mut detail,
+                                &[
+                                    ("GFX", metrics.get_average_gfxclk_frequency()),
+                                    ("SOC", metrics.get_average_socclk_frequency()),
+                                    ("UCLK", metrics.get_average_uclk_frequency()),
+                                    ("FCLK", metrics.get_average_fclk_frequency()),
+                                    ("VCLK", metrics.get_average_vclk_frequency()),
+                                    ("VPECLK", metrics.get_average_vpeclk_frequency()),
+                                    ("IPUCLK", metrics.get_average_ipuclk_frequency()),
+                                    ("MPIPU", metrics.get_average_mpipu_frequency()),
+                                ],
+                                metrics.get_average_mm_activity(),
+                                &[
+                                    ("prochot", metrics.get_throttle_residency_prochot()),
+                                    ("spl", metrics.get_throttle_residency_spl()),
+                                    ("fppt", metrics.get_throttle_residency_fppt()),
+                                    ("sppt", metrics.get_throttle_residency_sppt()),
+                                    ("thermal_core", metrics.get_throttle_residency_thm_core()),
+                                    ("thermal_gfx", metrics.get_throttle_residency_thm_gfx()),
+                                    ("thermal_soc", metrics.get_throttle_residency_thm_soc()),
+                                ],
+                            );
+                        }
                     }
                 }
                 // GPU metrics v3 exposes time-filtered system DRAM read/write

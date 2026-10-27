@@ -94,6 +94,30 @@ fn read_gtt_memory_bytes(sysfs_path: &std::path::Path) -> Option<(u64, u64)> {
     (used <= total).then_some((used, total))
 }
 
+fn insert_apu_metric_details(
+    detail: &mut HashMap<String, String>,
+    clocks_mhz: &[(&str, Option<u16>)],
+    vcn_activity: Option<u16>,
+    throttle_residency: &[(&str, Option<u32>)],
+) {
+    for (domain, frequency_mhz) in clocks_mhz {
+        if let Some(frequency_mhz) = frequency_mhz.filter(|frequency| *frequency > 0) {
+            detail.insert(format!("Frequency: {domain}"), frequency_mhz.to_string());
+        }
+    }
+    if let Some(activity) = vcn_activity {
+        detail.insert("Engine: VCN".to_string(), activity.to_string());
+    }
+    for (reason, raw_residency) in throttle_residency {
+        if let Some(raw_residency) = raw_residency {
+            detail.insert(
+                format!("Throttle residency raw: {reason}"),
+                raw_residency.to_string(),
+            );
+        }
+    }
+}
+
 /// Convert a `libamdgpu_top` hwmon power reading to watts.
 ///
 /// `HwmonPower::value` is already whole watts: `libamdgpu_top` divides the
