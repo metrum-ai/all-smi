@@ -1,0 +1,267 @@
+#!/usr/bin/env python3
+# Copyright 2026 Metrum AI
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Export all-smi NDJSON recordings as normalized CSV or Parquet.
+
+For zstd recordings, pipe decompressed NDJSON on stdin (for example,
+`zstd -dc trace.ndjson.zst | python3 scripts/record_export.py --format csv`).
+Gzip inputs are detected by suffix and decompressed directly.
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import gzip
+import json
+import math
+import os
+import sys
+import tempfile
+from typing import IO, Iterable, Iterator
+
+
+FIELDS = [
+    "timestamp",
+    "seq",
+    "interval_ms",
+    "lag_ms",
+    "missed_intervals",
+    "gap",
+    "hostname",
+    "section",
+    "device_id",
+    "device_name",
+    "metric",
+    "value",
+    "unit",
+]
+SECTIONS = ("gpus", "cpus", "memory", "chassis", "processes", "storage")
+IDENTIFIER_FIELDS = {"index", "device_id", "pid", "ppid"}
+GPU_UNAVAILABLE_NEGATIVE_FIELDS = {"utilization", "ane_utilization", "power_consumption"}
+GPU_UNAVAILABLE_ZERO_FIELDS = {"temperature", "frequency"}
+MEMORY_OPTIONAL_ZERO_FIELDS = {"buffers_bytes", "cached_bytes"}
+MEMORY_SWAP_FIELDS = {"swap_total_bytes", "swap_used_bytes", "swap_free_bytes"}
+
+
+def is_gpu_placeholder(metric: str, value: int | float) -> bool:
+    if metric in GPU_UNAVAILABLE_NEGATIVE_FIELDS:
+        return value < 0
+    if metric in GPU_UNAVAILABLE_ZERO_FIELDS:
+        return value == 0
+    return False
+
+
+def iter_rows(stream: Iterable[str]) -> Iterator[dict[str, object]]:
+    """Yield one normalized row per numeric metric in a data frame."""
+    units: dict[str, str] = {}
+    for line_number, line in enumerate(stream, start=1):
+        if not line.strip():
+            continue
+        try:
+            frame = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise ValueError(f"invalid JSON on input line {line_number}: {error}") from error
+        if not isinstance(frame, dict) or frame.get("header") or frame.get("index"):
+            if isinstance(frame, dict) and frame.get("header"):
+                candidate = frame.get("units", {})
+                if isinstance(candidate, dict):
+                    units = {str(key): str(value) for key, value in candidate.items()}
+            continue
+
+        metadata = {
+            "timestamp": frame.get("timestamp", ""),
+            "seq": frame.get("seq"),
+            "interval_ms": frame.get("interval_ms"),
+            "lag_ms": frame.get("lag_ms"),
+            "missed_intervals": frame.get("missed_intervals"),
+            "gap": frame.get("gap"),
+            "hostname": frame.get("hostname", ""),
+        }
+        emitted = False
+        for section in SECTIONS:
+            devices = frame.get(section)
+            if not isinstance(devices, list):
+                continue
+            for device in devices:
+                if not isinstance(device, dict):
+                    continue
+                device_id = device.get("uuid", device.get("device_uuid"))
+                if device_id is None:
+                    device_id = device.get("index", device.get("pid", ""))
+                device_name = device.get("name", device.get("process_name", ""))
+                for metric, value in device.items():
+                    if metric in IDENTIFIER_FIELDS:
+                        continue
+                    if isinstance(value, bool) or not isinstance(value, (int, float)):
+                        continue
+                    if isinstance(value, float) and not math.isfinite(value):
+                        continue
+                    if section == "gpus" and is_gpu_placeholder(metric, value):
+                        continue
+                    if section == "memory" and metric in MEMORY_OPTIONAL_ZERO_FIELDS and value == 0:
+                        continue
+                    if section == "memory" and metric in MEMORY_SWAP_FIELDS:
+                        if device.get("swap_total_bytes", 0) == 0:
+                            continue
+                    row = dict(metadata)
+                    row.update(
+                        gap=False,
+                        hostname=device.get("hostname") or device.get("instance") or metadata["hostname"],
+                        section=section,
+                        device_id=str(device_id),
+                        device_name=str(device_name),
+                        metric=metric,
+                        value=float(value),
+                        unit=units.get(f"{section}.{metric}", ""),
+                    )
+                    yield row
+                    emitted = True
+        named_host_gaps = 0
+        errors = frame.get("errors")
+        if isinstance(errors, list):
+            for error in errors:
+                if not isinstance(error, dict):
+                    continue
+                section_name = error.get("section")
+                prefix = "remote host "
+                if not isinstance(section_name, str) or not section_name.startswith(prefix):
+                    continue
+                host_id = section_name[len(prefix) :]
+                row = dict(metadata)
+                row.update(
+                    gap=True,
+                    hostname=host_id,
+                    section="recording",
+                    device_id=host_id,
+                    device_name=host_id,
+                    metric="gap",
+                    value=1.0,
+                    unit="boolean",
+                )
+                yield row
+                named_host_gaps += 1
+
+        if not named_host_gaps and (metadata["gap"] or not emitted):
+            row = dict(metadata)
+            row.update(
+                section="recording",
+                device_id="",
+                device_name="",
+                metric="gap" if metadata["gap"] else "frame",
+                value=1.0 if metadata["gap"] else 0.0,
+                unit="boolean",
+            )
+            yield row
+
+
+def open_input(path: str) -> IO[str]:
+    if path == "-":
+        return sys.stdin
+    if path.endswith(".gz"):
+        return gzip.open(path, mode="rt", encoding="utf-8")
+    if path.endswith(".zst"):
+        raise ValueError("decompress .zst input to stdin with `zstd -dc` first")
+    return open(path, mode="r", encoding="utf-8")
+
+
+def write_csv(rows: Iterable[dict[str, object]], output: IO[str]) -> None:
+    writer = csv.DictWriter(output, fieldnames=FIELDS, extrasaction="ignore")
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({key: str(value).lower() if isinstance(value, bool) else value for key, value in row.items()})
+
+
+def write_parquet(rows: Iterable[dict[str, object]], output_path: str) -> None:
+    try:
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+    except ImportError as error:
+        raise RuntimeError("Parquet export requires the optional `pyarrow` package") from error
+
+    schema = pa.schema(
+        [
+            ("timestamp", pa.string()),
+            ("seq", pa.int64()),
+            ("interval_ms", pa.int64()),
+            ("lag_ms", pa.int64()),
+            ("missed_intervals", pa.int64()),
+            ("gap", pa.bool_()),
+            ("hostname", pa.string()),
+            ("section", pa.string()),
+            ("device_id", pa.string()),
+            ("device_name", pa.string()),
+            ("metric", pa.string()),
+            ("value", pa.float64()),
+            ("unit", pa.string()),
+        ]
+    )
+    output_dir = os.path.dirname(os.path.abspath(output_path))
+    fd, temp_path = tempfile.mkstemp(prefix=".record-export-", suffix=".parquet", dir=output_dir)
+    os.close(fd)
+    try:
+        parquet = pq.ParquetWriter(temp_path, schema)
+        batch: list[dict[str, object]] = []
+        try:
+            for row in rows:
+                batch.append(row)
+                if len(batch) >= 4096:
+                    parquet.write_table(pa.Table.from_pylist(batch, schema=schema))
+                    batch.clear()
+            if batch:
+                parquet.write_table(pa.Table.from_pylist(batch, schema=schema))
+        finally:
+            parquet.close()
+        os.replace(temp_path, output_path)
+    except Exception:
+        try:
+            os.unlink(temp_path)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--input", default="-", help="NDJSON path, .gz path, or stdin (default)")
+    parser.add_argument("--format", choices=("csv", "parquet"), default="csv")
+    parser.add_argument("--output", default="-", help="output path; CSV defaults to stdout")
+    args = parser.parse_args(argv)
+
+    try:
+        source = open_input(args.input)
+        close_source = source is not sys.stdin
+        try:
+            rows = iter_rows(source)
+            if args.format == "csv":
+                if args.output == "-":
+                    write_csv(rows, sys.stdout)
+                else:
+                    with open(args.output, mode="w", newline="", encoding="utf-8") as output:
+                        write_csv(rows, output)
+            else:
+                if args.output == "-":
+                    parser.error("--output is required for Parquet")
+                write_parquet(rows, args.output)
+        finally:
+            if close_source:
+                source.close()
+    except (OSError, ValueError, RuntimeError) as error:
+        parser.error(str(error))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

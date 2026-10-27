@@ -7,6 +7,8 @@ on:
       - 'screenshots/**'
       - 'scripts/check-doc-links.py'
       - 'scripts/tests/test_doc_links.py'
+      - 'scripts/record_export.py'
+      - 'scripts/tests/**'
       - 'scripts/requirements-docs.txt'
       - '.github/workflows/docs.yml'
   push:
@@ -16,6 +18,8 @@ on:
       - 'screenshots/**'
       - 'scripts/check-doc-links.py'
       - 'scripts/tests/test_doc_links.py'
+      - 'scripts/record_export.py'
+      - 'scripts/tests/**'
       - 'scripts/requirements-docs.txt'
       - '.github/workflows/docs.yml'
 
@@ -36,5 +40,5 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install -r scripts/requirements-docs.txt
-      - run: python -m pytest scripts/tests/test_doc_links.py
+      - run: python -m pytest scripts/tests
       - run: python scripts/check-doc-links.py
