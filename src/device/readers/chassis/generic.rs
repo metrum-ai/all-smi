@@ -17,20 +17,15 @@
 //! This reader collects chassis-level metrics from:
 //! - DMI data (`/sys/class/dmi/id/`) for system identification
 //! - Thermal zones (`/sys/class/thermal/`) for board temperatures
-//! - Cached GPU power for total power consumption
 
 use crate::device::{ChassisInfo, ChassisReader};
 use crate::utils::get_hostname;
 use chrono::Local;
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
 
-/// Generic chassis reader that collects DMI info, thermal zones, and GPU power
-#[allow(dead_code)]
+/// Generic chassis reader for DMI information and thermal zones.
 pub struct GenericChassisReader {
     hostname: String,
-    /// Cached total GPU power (updated externally)
-    cached_gpu_power: Arc<RwLock<Option<f64>>>,
     /// Static DMI detail cached at construction (never changes at runtime)
     dmi_detail: HashMap<String, String>,
 }
@@ -50,22 +45,8 @@ impl GenericChassisReader {
         collect_dmi_info(&mut dmi_detail);
         Self {
             hostname: get_hostname(),
-            cached_gpu_power: Arc::new(RwLock::new(None)),
             dmi_detail,
         }
-    }
-
-    /// Update the cached GPU power value
-    /// This should be called from the data collection loop with aggregated GPU power
-    pub fn update_gpu_power(&self, total_gpu_power_watts: f64) {
-        if let Ok(mut power) = self.cached_gpu_power.write() {
-            *power = Some(total_gpu_power_watts);
-        }
-    }
-
-    /// Get the cached GPU power value
-    fn get_cached_gpu_power(&self) -> Option<f64> {
-        self.cached_gpu_power.read().ok().and_then(|p| *p)
     }
 }
 
@@ -178,8 +159,9 @@ impl ChassisReader for GenericChassisReader {
         #[cfg(not(target_os = "linux"))]
         let (inlet_temperature, outlet_temperature) = (None, None);
 
-        // Get total power from cached GPU power
-        let total_power_watts = self.get_cached_gpu_power();
+        // No generic chassis-level power sensor is available on this platform.
+        // GPU and CPU domain power remains available from their own readers.
+        let total_power_watts = None;
 
         let hostname = self.hostname.clone();
         Some(ChassisInfo {
@@ -209,19 +191,7 @@ mod tests {
     }
 
     #[test]
-    fn test_update_gpu_power() {
-        let reader = GenericChassisReader::new();
-        reader.update_gpu_power(350.5);
-
-        let chassis_info = reader.get_chassis_info();
-        assert!(chassis_info.is_some());
-
-        let info = chassis_info.unwrap();
-        assert_eq!(info.total_power_watts, Some(350.5));
-    }
-
-    #[test]
-    fn test_chassis_info_without_gpu_power() {
+    fn generic_chassis_reader_does_not_infer_gpu_power() {
         let reader = GenericChassisReader::new();
         let chassis_info = reader.get_chassis_info();
 

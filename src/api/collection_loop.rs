@@ -95,22 +95,11 @@ pub async fn run_collection_loop(
             Vec::new()
         };
 
-        // Collect chassis-level info (DMI, thermals, power).
-        let chassis_info: Vec<ChassisInfo> = chassis_reader
-            .get_chassis_info()
-            .into_iter()
-            .map(|mut ci| {
-                // Aggregate GPU power into chassis total if not already set.
-                if ci.total_power_watts.is_none() {
-                    let total_gpu_power =
-                        crate::metrics::gpu_readings::total_power_watts(&all_gpu_info);
-                    if total_gpu_power > 0.0 {
-                        ci.total_power_watts = Some(total_gpu_power);
-                    }
-                }
-                ci
-            })
-            .collect();
+        // Collect chassis-level info only from the chassis reader. GPU power
+        // remains a separate device-domain reading and must not be presented
+        // as chassis power when no chassis-level source is available.
+        let chassis_info: Vec<ChassisInfo> =
+            chassis_reader.get_chassis_info().into_iter().collect();
 
         let storage_info = disks.storage_info(&hostname);
 

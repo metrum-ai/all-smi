@@ -209,23 +209,6 @@ pub async fn collect_once<C: SnapshotCollector + 'static>(
         }
     }
 
-    // Mirror `api::server::run_api_mode`: when the chassis reader did not
-    // report a total power value but GPUs are reporting power, use the GPU
-    // sum as the chassis total so `snapshot --format prometheus` stays
-    // consistent with a `/metrics` scrape. This is a data-preparation step
-    // specific to the Prometheus path on the server side, but it is
-    // equally meaningful to JSON consumers.
-    if let (Some(gpus), Some(chassis)) = (snap.gpus.as_ref(), snap.chassis.as_mut()) {
-        let total_gpu_power = crate::metrics::gpu_readings::total_power_watts(gpus);
-        if total_gpu_power > 0.0 {
-            for ci in chassis.iter_mut() {
-                if ci.total_power_watts.is_none() {
-                    ci.total_power_watts = Some(total_gpu_power);
-                }
-            }
-        }
-    }
-
     snap
 }
 
