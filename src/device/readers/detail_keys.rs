@@ -64,6 +64,12 @@ pub const GTT_MEMORY_TOTAL_BYTES_DETAIL_KEY: &str = "gtt_memory_total_bytes";
 /// Availability marker used when device memory counters are not exposed.
 pub const MEMORY_STATUS_DETAIL_KEY: &str = "memory_status";
 
+/// APU system-DRAM read/write bandwidth from AMD gpu_metrics, in bytes/s.
+/// These are distinct from GPU activity and the privileged UMC PMU readings.
+pub const SYSTEM_DRAM_READ_BYTES_PER_SECOND_DETAIL_KEY: &str = "system_dram_read_bytes_per_second";
+pub const SYSTEM_DRAM_WRITE_BYTES_PER_SECOND_DETAIL_KEY: &str =
+    "system_dram_write_bytes_per_second";
+
 /// Current PCIe link generation of a device, as a bare decimal number
 /// (`"4"`) with no `Gen` prefix and no formatting.
 ///
@@ -373,6 +379,8 @@ pub const VOLATILE_DETAIL_KEYS: &[&str] = &[
     SOCKET_POWER_WATTS_DETAIL_KEY,
     GTT_MEMORY_USED_BYTES_DETAIL_KEY,
     GTT_MEMORY_TOTAL_BYTES_DETAIL_KEY,
+    SYSTEM_DRAM_READ_BYTES_PER_SECOND_DETAIL_KEY,
+    SYSTEM_DRAM_WRITE_BYTES_PER_SECOND_DETAIL_KEY,
     "voltage",
     "current",
     "asic_temperature",

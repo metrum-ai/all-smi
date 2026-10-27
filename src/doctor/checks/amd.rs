@@ -55,7 +55,7 @@ static RAPL_ACCESS: Check = Check {
 
 static UMC_BANDWIDTH: Check = Check {
     id: "amd.umc.bandwidth",
-    title: "System memory bandwidth access",
+    title: "AMD UMC PMU bandwidth access",
     severity_on_fail: Severity::Info,
     run: check_umc_bandwidth,
 };
@@ -735,7 +735,7 @@ fn check_umc_bandwidth(_ctx: &CheckCtx) -> CheckResult {
 fn describe_umc_bandwidth_availability(umc_count: usize, paranoid: Option<i32>) -> CheckResult {
     if umc_count == 0 {
         return CheckResult::Skip(
-            "System memory bandwidth unavailable: no amd_umc memory-controller PMUs were detected"
+            "AMD UMC PMU bandwidth unavailable: no amd_umc memory-controller PMUs were detected"
                 .to_string(),
         );
     }
@@ -745,7 +745,7 @@ fn describe_umc_bandwidth_availability(umc_count: usize, paranoid: Option<i32>) 
         |value| format!("kernel.perf_event_paranoid is {value}"),
     );
     CheckResult::Skip(format!(
-        "System memory bandwidth unavailable: detected {umc_count} amd_umc PMUs, but this build does not sample their system-wide perf counters; access to these counters requires CAP_PERFMON or an administrator-managed perf policy ({policy}). all-smi does not change kernel policy or request capabilities"
+        "AMD UMC PMU bandwidth unavailable: detected {umc_count} amd_umc PMUs, but this build does not sample their system-wide perf counters; access to these counters requires CAP_PERFMON or an administrator-managed perf policy ({policy}). all-smi does not change kernel policy or request capabilities"
     ))
 }
 

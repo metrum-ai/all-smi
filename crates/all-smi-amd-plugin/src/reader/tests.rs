@@ -17,6 +17,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn dram_bandwidth_mb_s_converts_to_decimal_bytes_per_second() {
+        assert_eq!(dram_bandwidth_mb_s_to_bytes_per_second(0), 0);
+        assert_eq!(dram_bandwidth_mb_s_to_bytes_per_second(1), 1_000_000);
+        assert_eq!(
+            dram_bandwidth_mb_s_to_bytes_per_second(18_938),
+            18_938_000_000
+        );
+    }
+
+    #[test]
     fn test_max_version_component_validation() {
         // Test that MAX_VERSION_COMPONENT is reasonable for Linux kernel versions
         const {

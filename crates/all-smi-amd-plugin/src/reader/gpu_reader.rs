@@ -169,6 +169,25 @@ impl GpuReader for AmdGpuReader {
                         }
                     }
                 }
+                // GPU metrics v3 exposes time-filtered system DRAM read/write
+                // bandwidth in decimal MB/s. Keep these SoC memory-domain
+                // readings separate from GFX activity and from UMC PMU data.
+                if let (Some(reads_mb_s), Some(writes_mb_s)) = (
+                    metrics.get_average_dram_reads(),
+                    metrics.get_average_dram_writes(),
+                ) {
+                    detail.insert(
+                        all_smi::device::readers::detail_keys::SYSTEM_DRAM_READ_BYTES_PER_SECOND_DETAIL_KEY
+                            .to_string(),
+                        dram_bandwidth_mb_s_to_bytes_per_second(reads_mb_s).to_string(),
+                    );
+                    detail.insert(
+                        all_smi::device::readers::detail_keys::SYSTEM_DRAM_WRITE_BYTES_PER_SECOND_DETAIL_KEY
+                            .to_string(),
+                        dram_bandwidth_mb_s_to_bytes_per_second(writes_mb_s).to_string(),
+                    );
+                }
+
                 if let Some(temp) = metrics.get_temperature_edge() {
                     // Validate temperature
                     temperature = (temp as u32).min(MAX_GPU_TEMP_CELSIUS);

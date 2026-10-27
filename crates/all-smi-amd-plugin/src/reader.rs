@@ -44,6 +44,11 @@ fn clamp_fan_rpm(rpm: Option<u32>) -> Option<u32> {
     rpm.map(|value| value.min(MAX_GPU_FAN_RPM))
 }
 
+/// Convert the `gpu_metrics` DRAM bandwidth field (decimal MB/s) to bytes/s.
+fn dram_bandwidth_mb_s_to_bytes_per_second(value: u16) -> u64 {
+    u64::from(value) * 1_000_000
+}
+
 /// Convert a `gpu_metrics` socket power reading to watts.
 ///
 /// The unit depends on the table's format revision, so one divisor cannot
