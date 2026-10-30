@@ -263,9 +263,29 @@ fn extract_hex_after(haystack: &str, marker: &str) -> Option<u32> {
 pub const UTILIZATION_ENGINE_TYPES: &[&str] = &["3D", "Compute"];
 
 pub fn is_utilization_engine_type(engtype: &str) -> bool {
-    UTILIZATION_ENGINE_TYPES
-        .iter()
-        .any(|candidate| engtype.eq_ignore_ascii_case(candidate))
+    UTILIZATION_ENGINE_TYPES.iter().any(|candidate| {
+        let Some(prefix) = engtype.get(..candidate.len()) else {
+            return false;
+        };
+        if !prefix.eq_ignore_ascii_case(candidate) {
+            return false;
+        }
+        let suffix = &engtype[candidate.len()..];
+        if suffix.is_empty() {
+            return true;
+        }
+        // Some drivers publish engine classes such as `Compute 0`, not
+        // just `Compute`. Require a separator and numeric ordinal so names
+        // like `ComputeCopy` don't accidentally enter the headline gauge.
+        let Some(ordinal) = suffix
+            .strip_prefix(' ')
+            .or_else(|| suffix.strip_prefix('_'))
+        else {
+            return false;
+        };
+        let ordinal = ordinal.trim();
+        !ordinal.is_empty() && ordinal.bytes().all(|c| c.is_ascii_digit())
+    })
 }
 
 /// Reduce raw `\GPU Engine(*)\Utilization Percentage` samples to one
@@ -786,6 +806,37 @@ mod tests {
 #[cfg(test)]
 mod npu_fixture_tests {
     use super::*;
+
+    #[test]
+    fn numbered_radeon_compute_engine_is_included() {
+        let parse = |pid, name: &str| {
+            parse_gpu_engine_instance(&format!(
+                "pid_{pid}_luid_0x00000000_0x0000fc61_phys_0_eng_0_engtype_{name}"
+            ))
+            .unwrap()
+        };
+        let samples = vec![
+            (parse(42, "Compute 0"), 70.0),
+            (parse(43, "compute 0"), 19.0),
+            (parse(44, "3D"), 0.0),
+            (parse(45, "Copy"), 100.0),
+        ];
+        assert_eq!(
+            aggregate_engine_utilization(samples)[&AdapterLuid::new(0, 0xfc61)],
+            89.0
+        );
+        assert!(is_utilization_engine_type("3D 1"));
+        assert!(is_utilization_engine_type("Compute_2"));
+        for name in [
+            "ComputeCopy",
+            "Compute -1",
+            "Compute 0 Copy",
+            "Video 0",
+            "Compute ",
+        ] {
+            assert!(!is_utilization_engine_type(name), "{name}");
+        }
+    }
 
     #[test]
     fn laptop_luid_and_engine_aggregation() {

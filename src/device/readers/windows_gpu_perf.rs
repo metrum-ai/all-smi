@@ -65,6 +65,7 @@
 //! cross-compile check and by `all-smi doctor` output from real
 //! machines.
 
+pub mod coalesced;
 pub mod ids;
 
 #[cfg(target_os = "windows")]
@@ -198,14 +199,11 @@ const SNAPSHOT_COALESCE_WINDOW: std::time::Duration = std::time::Duration::from_
 /// first call collects, and the rest share its result.
 #[cfg(target_os = "windows")]
 pub fn snapshot() -> Snapshot {
-    // Hold the cache lock across collection, so concurrent GPU and NPU
-    // readers cannot both miss the cache and sample PDH microseconds apart.
-    let mut guard = snapshot_cache().lock().unwrap_or_else(|e| e.into_inner());
-    if let Some((taken_at, cached)) = guard.as_ref()
-        && taken_at.elapsed() < SNAPSHOT_COALESCE_WINDOW
-    {
-        return cached.clone();
-    }
+    snapshot_cache().get_or_collect(SNAPSHOT_COALESCE_WINDOW, collect_snapshot)
+}
+
+#[cfg(target_os = "windows")]
+fn collect_snapshot() -> Snapshot {
     // DXGI runs first, and its answer decides whether the shared-aperture
     // PDH counters are worth sampling at all. A machine with only discrete
     // cards never adds them to the query.
@@ -284,13 +282,11 @@ pub fn snapshot() -> Snapshot {
         &shared_luids,
     );
 
-    let snapshot = Snapshot {
+    Snapshot {
         adapters,
         processes,
         npus,
-    };
-    *guard = Some((std::time::Instant::now(), snapshot.clone()));
-    snapshot
+    }
 }
 
 /// Non-Windows builds have nothing to sample. The readers that call this
@@ -302,14 +298,14 @@ pub fn snapshot() -> Snapshot {
 }
 
 #[cfg(target_os = "windows")]
-type SnapshotCache = std::sync::Mutex<Option<(std::time::Instant, Snapshot)>>;
+type SnapshotCache = coalesced::Coalesced<Snapshot>;
 
 #[cfg(target_os = "windows")]
 static LAST_SNAPSHOT: once_cell::sync::OnceCell<SnapshotCache> = once_cell::sync::OnceCell::new();
 
 #[cfg(target_os = "windows")]
 fn snapshot_cache() -> &'static SnapshotCache {
-    LAST_SNAPSHOT.get_or_init(|| std::sync::Mutex::new(None))
+    LAST_SNAPSHOT.get_or_init(SnapshotCache::default)
 }
 
 /// The most recent [`snapshot`], without consuming a PDH collection.
@@ -320,14 +316,7 @@ fn snapshot_cache() -> &'static SnapshotCache {
 /// nothing has been sampled yet.
 #[cfg(target_os = "windows")]
 pub fn latest() -> Snapshot {
-    let guard = match snapshot_cache().lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    guard
-        .as_ref()
-        .map(|(_, snapshot)| snapshot.clone())
-        .unwrap_or_default()
+    snapshot_cache().latest().unwrap_or_default()
 }
 
 #[cfg(not(target_os = "windows"))]
