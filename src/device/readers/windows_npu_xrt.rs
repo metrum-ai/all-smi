@@ -33,6 +33,7 @@ pub fn parse_examine(examine: &str, platform: &str) -> HashMap<String, String> {
             let name = match key.trim() {
                 "Version" => Some("xrt_version"),
                 "NPU Firmware Version" => Some("firmware_version"),
+                "NPU Driver Version" => Some("npu_driver_version"),
                 _ => None,
             };
             insert_value(&mut fields, name, value);
@@ -111,10 +112,11 @@ mod tests {
         let fields = parse_examine(examine, platform);
         assert_eq!(fields.get("xrt_version").unwrap(), "2.21.0");
         assert_eq!(fields.get("firmware_version").unwrap(), "1.1.2.64");
+        assert_eq!(fields.get("npu_driver_version").unwrap(), "32.0.20102.3930");
         assert_eq!(fields.get("platform_name").unwrap(), "NPU GorgonPoint1");
         assert_eq!(fields.get("power_mode").unwrap(), "Performance");
         assert_eq!(fields.get("total_columns").unwrap(), "8");
-        assert_eq!(fields.len(), 5);
+        assert_eq!(fields.len(), 6);
     }
 
     #[test]

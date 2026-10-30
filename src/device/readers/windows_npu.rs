@@ -46,18 +46,26 @@ impl GpuReader for WindowsNpuReader {
                     format!("{:04x}", adapter.device),
                 );
                 let v = adapter.driver_version;
-                detail.insert(
-                    "driver_version".to_string(),
-                    format!(
-                        "{}.{}.{}.{}",
-                        v >> 48,
-                        (v >> 32) & 0xffff,
-                        (v >> 16) & 0xffff,
-                        v & 0xffff
-                    ),
-                );
+                if v != 0 {
+                    detail.insert(
+                        "driver_version".to_string(),
+                        format!(
+                            "{}.{}.{}.{}",
+                            v >> 48,
+                            (v >> 32) & 0xffff,
+                            (v >> 16) & 0xffff,
+                            v & 0xffff
+                        ),
+                    );
+                }
                 if adapter.vendor == 0x1022 || adapter.vendor == 0x1002 {
-                    detail.extend(windows_npu_xrt::cached_details());
+                    let mut xrt = windows_npu_xrt::cached_details();
+                    if let Some(version) = xrt.remove("npu_driver_version") {
+                        detail
+                            .entry("driver_version".to_string())
+                            .or_insert(version);
+                    }
+                    detail.extend(xrt);
                 }
                 if npu.used_memory.is_none() {
                     detail.insert(
