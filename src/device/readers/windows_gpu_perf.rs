@@ -966,7 +966,8 @@ mod tests {
         Snapshot {
             adapters,
             processes,
-            ..Snapshot::default()
+            #[cfg(target_os = "windows")]
+            npus: Vec::new(),
         }
     }
 

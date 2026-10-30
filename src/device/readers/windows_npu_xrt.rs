@@ -29,15 +29,13 @@ pub fn parse_examine(examine: &str, platform: &str) -> HashMap<String, String> {
         if !line.starts_with(char::is_whitespace) && !line.trim().is_empty() {
             in_xrt = false;
         }
-        if in_xrt {
-            if let Some((key, value)) = line.split_once(':') {
-                let name = match key.trim() {
-                    "Version" => Some("xrt_version"),
-                    "NPU Firmware Version" => Some("firmware_version"),
-                    _ => None,
-                };
-                insert_value(&mut fields, name, value);
-            }
+        if in_xrt && let Some((key, value)) = line.split_once(':') {
+            let name = match key.trim() {
+                "Version" => Some("xrt_version"),
+                "NPU Firmware Version" => Some("firmware_version"),
+                _ => None,
+            };
+            insert_value(&mut fields, name, value);
         }
     }
     for line in platform.lines() {
