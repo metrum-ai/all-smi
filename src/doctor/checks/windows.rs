@@ -18,7 +18,14 @@
 
 use crate::doctor::types::{Check, CheckCtx, CheckResult, Severity};
 
-static CHECKS: &[&Check] = &[&WMI, &GPU_PERF_COUNTERS, &RYZEN_MASTER, &INTEL_WMI, &LHM];
+static CHECKS: &[&Check] = &[
+    &WMI,
+    &GPU_PERF_COUNTERS,
+    &NPU,
+    &RYZEN_MASTER,
+    &INTEL_WMI,
+    &LHM,
+];
 
 pub fn checks() -> &'static [&'static Check] {
     CHECKS
@@ -37,6 +44,45 @@ static GPU_PERF_COUNTERS: Check = Check {
     severity_on_fail: Severity::Info,
     run: check_gpu_perf_counters,
 };
+
+static NPU: Check = Check {
+    id: "windows.npu",
+    title: "NPU discovery and performance counters (DXCore / PDH)",
+    severity_on_fail: Severity::Info,
+    run: check_npu,
+};
+
+fn check_npu(_ctx: &CheckCtx) -> CheckResult {
+    #[cfg(target_os = "windows")]
+    {
+        let snapshot = crate::device::readers::windows_gpu_perf::snapshot();
+        let xrt = std::path::Path::new(r"C:\Windows\System32\AMD\xrt-smi.exe").is_file();
+        if snapshot.npus.is_empty() {
+            return CheckResult::Skip(format!("DXCore found no NPU; xrt-smi present: {xrt}"));
+        }
+        let available = snapshot
+            .npus
+            .iter()
+            .filter(|npu| npu.used_memory.is_some() || npu.utilization.is_some())
+            .count();
+        let summary = format!(
+            "DXCore found {} NPU(s); {available} with PDH instances; xrt-smi present: {xrt}",
+            snapshot.npus.len()
+        );
+        if available == snapshot.npus.len() {
+            CheckResult::Pass(summary)
+        } else {
+            CheckResult::Warn(
+                summary,
+                Some("Check Windows GPU performance counter availability".to_string()),
+            )
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        CheckResult::Skip("not Windows".to_string())
+    }
+}
 
 static RYZEN_MASTER: Check = Check {
     id: "windows.amd_ryzen_master",

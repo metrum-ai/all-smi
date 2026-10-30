@@ -70,8 +70,9 @@
 
 use super::ids::{
     AdapterLuid, GpuAdapterMemoryInstance, GpuEngineInstance, GpuProcessMemoryInstance,
-    aggregate_adapter_memory, aggregate_engine_utilization, parse_gpu_adapter_memory_instance,
-    parse_gpu_engine_instance, parse_gpu_process_memory_instance,
+    aggregate_adapter_memory, aggregate_engine_utilization, aggregate_npu_utilization,
+    parse_gpu_adapter_memory_instance, parse_gpu_engine_instance,
+    parse_gpu_process_memory_instance,
 };
 use once_cell::sync::OnceCell;
 use std::collections::HashMap;
@@ -103,6 +104,9 @@ pub struct PdhSample {
     /// after start-up, and on hosts that publish no GPU Engine
     /// instances.
     pub utilization: HashMap<AdapterLuid, f64>,
+    /// All engine types, for compute-only devices, keyed by adapter and pid.
+    pub npu_utilization: HashMap<AdapterLuid, f64>,
+    pub npu_process_utilization: HashMap<(AdapterLuid, u32), f64>,
     /// System-wide dedicated VRAM in use, per adapter, in bytes.
     pub adapter_memory: HashMap<AdapterLuid, u64>,
     /// Dedicated VRAM in use per (pid, adapter), in bytes.
@@ -221,6 +225,8 @@ impl GpuCounterQuery {
                     parse_gpu_engine_instance(&name).map(|instance| (instance, value))
                 })
                 .collect::<Vec<(GpuEngineInstance, f64)>>();
+            (sample.npu_utilization, sample.npu_process_utilization) =
+                aggregate_npu_utilization(engine_samples.iter().cloned());
             sample.utilization = aggregate_engine_utilization(engine_samples);
         }
 

@@ -325,6 +325,52 @@ pub fn aggregate_engine_utilization(
     per_adapter
 }
 
+/// Reduce NPU engine counters without filtering on graphics engine names.
+/// Device utilization is the busiest engine's sum over processes; process
+/// utilization is the busiest engine for that process. Separate physical
+/// engines and case-insensitive engine names remain distinct.
+#[allow(clippy::type_complexity)]
+pub fn aggregate_npu_utilization(
+    samples: impl IntoIterator<Item = (GpuEngineInstance, f64)>,
+) -> (HashMap<AdapterLuid, f64>, HashMap<(AdapterLuid, u32), f64>) {
+    let mut per_engine: HashMap<(AdapterLuid, u32, u32, String), f64> = HashMap::new();
+    let mut per_process_engine: HashMap<(AdapterLuid, u32, u32, u32, String), f64> = HashMap::new();
+    for (instance, value) in samples {
+        if !value.is_finite() || value < 0.0 {
+            continue;
+        }
+        let engine_type = instance.engtype.to_ascii_uppercase();
+        *per_engine
+            .entry((
+                instance.luid,
+                instance.phys,
+                instance.eng,
+                engine_type.clone(),
+            ))
+            .or_default() += value;
+        *per_process_engine
+            .entry((
+                instance.luid,
+                instance.pid,
+                instance.phys,
+                instance.eng,
+                engine_type,
+            ))
+            .or_default() += value;
+    }
+    let mut devices: HashMap<AdapterLuid, f64> = HashMap::new();
+    for ((luid, _, _, _), value) in per_engine {
+        let slot = devices.entry(luid).or_default();
+        *slot = slot.max(value.clamp(0.0, 100.0));
+    }
+    let mut processes: HashMap<(AdapterLuid, u32), f64> = HashMap::new();
+    for ((luid, pid, _, _, _), value) in per_process_engine {
+        let slot = processes.entry((luid, pid)).or_default();
+        *slot = slot.max(value.clamp(0.0, 100.0));
+    }
+    (devices, processes)
+}
+
 /// Sum `\GPU Adapter Memory(*)\Dedicated Usage` samples per adapter.
 ///
 /// Summing is right here, unlike for engines: an adapter can expose
@@ -734,5 +780,37 @@ mod tests {
         let adapters = vec![identity(1, 0x1002, 0x744C, "AMD Radeon RX 7900 XTX")];
         assert!(match_adapter(&adapters, Some(r"PCI\VEN_1002&DEV_9999"), "Unknown", 9).is_none());
         assert!(match_adapter(&[], None, "anything", 0).is_none());
+    }
+}
+
+#[cfg(test)]
+mod npu_fixture_tests {
+    use super::*;
+
+    #[test]
+    fn laptop_luid_and_engine_aggregation() {
+        let npu = AdapterLuid::new(0, 0x11a8f);
+        let gpu = AdapterLuid::new(0, 0xfc61);
+        let memory =
+            parse_gpu_process_memory_instance("pid_7740_luid_0x00000000_0x00011a8f_phys_0")
+                .unwrap();
+        assert_eq!((memory.pid, memory.luid), (7740, npu));
+        let engine = |pid, luid: &str, eng, kind: &str| {
+            parse_gpu_engine_instance(&format!(
+                "pid_{pid}_luid_0x00000000_{luid}_phys_0_eng_{eng}_engtype_{kind}"
+            ))
+            .unwrap()
+        };
+        let (devices, processes) = aggregate_npu_utilization(vec![
+            (engine(7740, "0x00011a8f", 0, "Compute"), 20.0),
+            (engine(12, "0x00011a8f", 0, "compute"), 30.0),
+            (engine(7740, "0x00011a8f", 1, "Other"), 40.0),
+            (engine(42, "0x0000fc61", 0, "3D"), 80.0),
+            (engine(42, "0x00011a8f", 0, "Compute"), f64::NAN),
+        ]);
+        assert_eq!(devices[&npu], 50.0);
+        assert_eq!(devices[&gpu], 80.0);
+        assert_eq!(processes[&(npu, 7740)], 40.0);
+        assert_eq!(processes[&(npu, 12)], 30.0);
     }
 }

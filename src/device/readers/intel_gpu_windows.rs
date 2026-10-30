@@ -145,9 +145,12 @@ impl IntelWindowsGpuReader {
                 let hostname = get_hostname();
                 let time = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
+                let perf_snapshot = crate::device::readers::windows_gpu_perf::snapshot();
                 for (idx, controller) in controllers.iter().enumerate() {
                     let name = controller.name.clone().unwrap_or_default();
-                    if !is_intel_gpu_name(&name) {
+                    if crate::device::readers::windows_gpu_perf::is_npu_controller(
+                        &perf_snapshot, &name, controller.pnp_device_i_d.as_deref(),
+                    ) || !is_intel_gpu_name(&name) {
                         continue;
                     }
 

@@ -114,8 +114,12 @@ impl AmdWindowsGpuReader {
             let hostname = get_hostname();
             let time = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
+            let perf_snapshot = windows_gpu_perf::snapshot();
             for (idx, controller) in controllers.iter().enumerate() {
                 let name = controller.name.clone().unwrap_or_default();
+                if windows_gpu_perf::is_npu_controller(&perf_snapshot, &name, controller.pnp_device_i_d.as_deref()) {
+                    continue;
+                }
 
                 // Filter for AMD GPUs only
                 let name_lower = name.to_lowercase();

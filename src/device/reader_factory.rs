@@ -147,6 +147,11 @@ pub fn get_gpu_readers() -> Vec<Box<dyn GpuReader>> {
         "windows" => {
             #[cfg(target_os = "windows")]
             {
+                // Discovery and PDH sampling are shared with the Windows GPU readers.
+                readers.push(Box::new(
+                    crate::device::readers::windows_npu::WindowsNpuReader,
+                ));
+
                 // Check for NVIDIA GPU on Windows
                 if has_nvidia() {
                     readers.push(Box::new(nvidia::NvidiaGpuReader::new()));
