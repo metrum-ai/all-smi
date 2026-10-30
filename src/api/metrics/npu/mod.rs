@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 pub mod amdxdna;
 pub mod common;
 pub mod exporter_trait;
@@ -67,7 +67,7 @@ impl<'a> NpuMetricExporter<'a> {
             // index 5, which `NEURON_IDX` below pins. XDNA is appended at 6.
             #[cfg(target_os = "linux")]
             exporters.push(Box::new(neuron::NeuronExporter::new()));
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
             exporters.push(Box::new(amdxdna::AmdXdnaExporter::new()));
             exporters
         });

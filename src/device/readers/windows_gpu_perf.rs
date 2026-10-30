@@ -527,6 +527,10 @@ pub fn apply_to_gpu_info(gpu: &mut GpuInfo, metrics: &AdapterMetrics) {
     }
 
     if let Some(utilization) = metrics.utilization {
+        gpu.detail.insert(
+            crate::device::readers::detail_keys::WINDOWS_PDH_UTILIZATION_DETAIL_KEY.to_string(),
+            utilization.to_string(),
+        );
         gpu.utilization = utilization;
         gpu.detail
             .insert("Source: Utilization".to_string(), "PDH".to_string());

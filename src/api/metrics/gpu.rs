@@ -106,6 +106,23 @@ impl<'a> GpuMetricExporter<'a> {
                 .metric("all_smi_gpu_utilization", &base_labels, utilization);
         }
 
+        // Retain the Windows PDH engine reading when ADL or another vendor
+        // backend supplies the headline utilization instead.
+        if let Some(value) = info
+            .detail
+            .get(detail_keys::WINDOWS_PDH_UTILIZATION_DETAIL_KEY)
+            .and_then(|value| value.parse::<f64>().ok())
+            .filter(|value| value.is_finite() && (0.0..=100.0).contains(value))
+        {
+            builder
+                .help(
+                    "all_smi_gpu_windows_pdh_utilization",
+                    "Windows PDH busiest engine utilization percentage",
+                )
+                .type_("all_smi_gpu_windows_pdh_utilization", "gauge")
+                .metric("all_smi_gpu_windows_pdh_utilization", &base_labels, value);
+        }
+
         // Memory metrics. Readers that cannot distinguish an unavailable
         // counter from a real zero mark it explicitly in `detail`.
         if info
@@ -1131,6 +1148,26 @@ mod tests {
             xid_event_counts: HashMap::new(),
             detail: HashMap::new(),
         }
+    }
+
+    #[test]
+    fn pdh_utilization_is_a_gauge_not_a_dynamic_info_label() {
+        let mut gpu = make_nvidia_gpu();
+        gpu.detail.insert(
+            detail_keys::WINDOWS_PDH_UTILIZATION_DETAIL_KEY.to_string(),
+            "89.5".to_string(),
+        );
+        let output = GpuMetricExporter::new(&[gpu]).export_metrics();
+        assert!(output.lines().any(
+            |line| line.starts_with("all_smi_gpu_windows_pdh_utilization{")
+                && line.ends_with(" 89.5")
+        ));
+        assert!(
+            output
+                .lines()
+                .filter(|line| line.starts_with("all_smi_gpu_info{"))
+                .all(|line| !line.contains("windows_pdh_utilization"))
+        );
     }
 
     #[test]
