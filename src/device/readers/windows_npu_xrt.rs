@@ -62,7 +62,6 @@ fn insert_value(fields: &mut HashMap<String, String>, name: Option<&str>, value:
 /// Refresh once per minute at most, including failures, across all readers.
 #[cfg(target_os = "windows")]
 pub fn cached_details() -> HashMap<String, String> {
-    use std::process::Command;
     use std::sync::{Mutex, OnceLock};
     use std::time::{Duration, Instant};
 
@@ -71,15 +70,18 @@ pub fn cached_details() -> HashMap<String, String> {
     let Ok(mut cache) = CACHE.get_or_init(|| Mutex::new(None)).lock() else {
         return HashMap::new();
     };
-    if let Some((when, fields)) = cache.as_ref() {
-        if when.elapsed() < Duration::from_secs(60) {
-            return fields.clone();
-        }
+    if let Some((when, fields)) = cache.as_ref()
+        && when.elapsed() < Duration::from_secs(60)
+    {
+        return fields.clone();
     }
     let started = Instant::now();
     let tool = std::path::Path::new(r"C:\Windows\System32\AMD\xrt-smi.exe");
     let run = |args: &[&str]| -> Option<String> {
-        let output = Command::new(tool).args(args).output().ok()?;
+        let output = crate::utils::command::new_command(tool)
+            .args(args)
+            .output()
+            .ok()?;
         output
             .status
             .success()
