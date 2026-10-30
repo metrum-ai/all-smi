@@ -1134,6 +1134,38 @@ mod tests {
     }
 
     #[test]
+    fn windows_npu_exports_generic_usage_and_details() {
+        let mut npu = make_nvidia_gpu();
+        npu.device_type = "NPU".to_string();
+        npu.name = "NPU Compute Accelerator Device".to_string();
+        npu.utilization = 46.0;
+        npu.used_memory = 2_399 * 1024 * 1024;
+        npu.total_memory = 8 * 1024 * 1024 * 1024;
+        npu.detail
+            .insert("driver".to_string(), "windows_dxcore".to_string());
+        npu.detail
+            .insert("firmware_version".to_string(), "1.1.2.64".to_string());
+        let output = GpuMetricExporter::new(&[npu]).export_metrics();
+        assert!(
+            output
+                .lines()
+                .any(|line| line.starts_with("all_smi_gpu_utilization{") && line.ends_with(" 46"))
+        );
+        assert!(
+            output
+                .lines()
+                .any(|line| line.starts_with("all_smi_gpu_memory_used_bytes{")
+                    && line.ends_with(" 2515533824"))
+        );
+        assert!(
+            output
+                .lines()
+                .any(|line| line.starts_with("all_smi_gpu_info{")
+                    && line.contains("firmware_version=\"1.1.2.64\""))
+        );
+    }
+
+    #[test]
     fn exporter_emits_all_new_threshold_metrics() {
         let gpu = make_nvidia_gpu();
         let gpus = vec![gpu];
