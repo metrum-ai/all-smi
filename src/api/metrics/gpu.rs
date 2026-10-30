@@ -106,6 +106,23 @@ impl<'a> GpuMetricExporter<'a> {
                 .metric("all_smi_gpu_utilization", &base_labels, utilization);
         }
 
+        // Retain the Windows PDH engine reading when ADL or another vendor
+        // backend supplies the headline utilization instead.
+        if let Some(value) = info
+            .detail
+            .get(detail_keys::WINDOWS_PDH_UTILIZATION_DETAIL_KEY)
+            .and_then(|value| value.parse::<f64>().ok())
+            .filter(|value| value.is_finite() && (0.0..=100.0).contains(value))
+        {
+            builder
+                .help(
+                    "all_smi_gpu_windows_pdh_utilization",
+                    "Windows PDH busiest engine utilization percentage",
+                )
+                .type_("all_smi_gpu_windows_pdh_utilization", "gauge")
+                .metric("all_smi_gpu_windows_pdh_utilization", &base_labels, value);
+        }
+
         // Memory metrics. Readers that cannot distinguish an unavailable
         // counter from a real zero mark it explicitly in `detail`.
         if info
@@ -1131,6 +1148,58 @@ mod tests {
             xid_event_counts: HashMap::new(),
             detail: HashMap::new(),
         }
+    }
+
+    #[test]
+    fn pdh_utilization_is_a_gauge_not_a_dynamic_info_label() {
+        let mut gpu = make_nvidia_gpu();
+        gpu.detail.insert(
+            detail_keys::WINDOWS_PDH_UTILIZATION_DETAIL_KEY.to_string(),
+            "89.5".to_string(),
+        );
+        let output = GpuMetricExporter::new(&[gpu]).export_metrics();
+        assert!(output.lines().any(
+            |line| line.starts_with("all_smi_gpu_windows_pdh_utilization{")
+                && line.ends_with(" 89.5")
+        ));
+        assert!(
+            output
+                .lines()
+                .filter(|line| line.starts_with("all_smi_gpu_info{"))
+                .all(|line| !line.contains("windows_pdh_utilization"))
+        );
+    }
+
+    #[test]
+    fn windows_npu_exports_generic_usage_and_details() {
+        let mut npu = make_nvidia_gpu();
+        npu.device_type = "NPU".to_string();
+        npu.name = "NPU Compute Accelerator Device".to_string();
+        npu.utilization = 46.0;
+        npu.used_memory = 2_399 * 1024 * 1024;
+        npu.total_memory = 8 * 1024 * 1024 * 1024;
+        npu.detail
+            .insert("driver".to_string(), "windows_dxcore".to_string());
+        npu.detail
+            .insert("firmware_version".to_string(), "1.1.2.64".to_string());
+        let output = GpuMetricExporter::new(&[npu]).export_metrics();
+        assert!(
+            output
+                .lines()
+                .any(|line| line.starts_with("all_smi_gpu_utilization{") && line.ends_with(" 46"))
+        );
+        assert!(
+            output
+                .lines()
+                .any(|line| line.starts_with("all_smi_gpu_memory_used_bytes{")
+                    && line.ends_with(" 2515533824"))
+        );
+        assert!(
+            output
+                .lines()
+                .any(|line| line.starts_with("all_smi_gpu_info{")
+                    && line.contains("firmware_version=\"1.1.2.64\""))
+        );
     }
 
     #[test]

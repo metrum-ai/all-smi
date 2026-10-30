@@ -65,6 +65,7 @@
 //! cross-compile check and by `all-smi doctor` output from real
 //! machines.
 
+pub mod coalesced;
 pub mod ids;
 
 #[cfg(target_os = "windows")]
@@ -125,6 +126,17 @@ pub struct ProcessGpuMemory {
 pub struct Snapshot {
     pub adapters: Vec<AdapterMetrics>,
     pub processes: Vec<ProcessGpuMemory>,
+    #[cfg(target_os = "windows")]
+    pub npus: Vec<NpuMetrics>,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Clone, Debug)]
+pub struct NpuMetrics {
+    pub adapter: super::windows_npu_dxcore::NpuAdapter,
+    pub utilization: Option<f64>,
+    pub used_memory: Option<u64>,
+    pub processes: Vec<(u32, u64, Option<f64>)>,
 }
 
 impl Snapshot {
@@ -187,13 +199,21 @@ const SNAPSHOT_COALESCE_WINDOW: std::time::Duration = std::time::Duration::from_
 /// first call collects, and the rest share its result.
 #[cfg(target_os = "windows")]
 pub fn snapshot() -> Snapshot {
-    if let Some(cached) = cached_snapshot(SNAPSHOT_COALESCE_WINDOW) {
-        return cached;
-    }
+    snapshot_cache().get_or_collect(SNAPSHOT_COALESCE_WINDOW, collect_snapshot)
+}
+
+#[cfg(target_os = "windows")]
+fn collect_snapshot() -> Snapshot {
     // DXGI runs first, and its answer decides whether the shared-aperture
     // PDH counters are worth sampling at all. A machine with only discrete
     // cards never adds them to the query.
-    let dxgi_adapters = dxgi::enumerate();
+    let npu_adapters = super::windows_npu_dxcore::enumerate();
+    let npu_luids: std::collections::HashSet<_> =
+        npu_adapters.iter().map(|adapter| adapter.luid).collect();
+    let dxgi_adapters = dxgi::enumerate()
+        .into_iter()
+        .filter(|adapter| !npu_luids.contains(&adapter.identity.luid))
+        .collect::<Vec<_>>();
     let resolved: Vec<_> = dxgi_adapters
         .into_iter()
         .map(|adapter| {
@@ -209,7 +229,31 @@ pub fn snapshot() -> Snapshot {
         .filter(|(_, _, is_shared)| *is_shared)
         .map(|(adapter, _, _)| adapter.identity.luid)
         .collect();
-    let sample = pdh::sample(!shared_luids.is_empty());
+    let sample = pdh::sample(!shared_luids.is_empty() || !npu_adapters.is_empty());
+    let npus = npu_adapters
+        .into_iter()
+        .map(|adapter| {
+            let luid = adapter.luid;
+            let used_memory = super::windows_npu_metrics::adapter_memory(
+                sample.adapter_memory.get(&luid).copied(),
+                sample.adapter_shared_memory.get(&luid).copied(),
+            );
+            let processes = super::windows_npu_metrics::process_rows(
+                luid,
+                sample
+                    .process_memory
+                    .iter()
+                    .chain(&sample.process_shared_memory),
+                &sample.npu_process_utilization,
+            );
+            NpuMetrics {
+                utilization: sample.npu_utilization.get(&luid).copied(),
+                used_memory,
+                adapter,
+                processes,
+            }
+        })
+        .collect();
 
     let adapters = resolved
         .into_iter()
@@ -238,12 +282,11 @@ pub fn snapshot() -> Snapshot {
         &shared_luids,
     );
 
-    let snapshot = Snapshot {
+    Snapshot {
         adapters,
         processes,
-    };
-    store_snapshot(&snapshot);
-    snapshot
+        npus,
+    }
 }
 
 /// Non-Windows builds have nothing to sample. The readers that call this
@@ -255,35 +298,14 @@ pub fn snapshot() -> Snapshot {
 }
 
 #[cfg(target_os = "windows")]
-type SnapshotCache = std::sync::Mutex<Option<(std::time::Instant, Snapshot)>>;
+type SnapshotCache = coalesced::Coalesced<Snapshot>;
 
 #[cfg(target_os = "windows")]
 static LAST_SNAPSHOT: once_cell::sync::OnceCell<SnapshotCache> = once_cell::sync::OnceCell::new();
 
 #[cfg(target_os = "windows")]
 fn snapshot_cache() -> &'static SnapshotCache {
-    LAST_SNAPSHOT.get_or_init(|| std::sync::Mutex::new(None))
-}
-
-/// The cached snapshot, if it is younger than `max_age`.
-#[cfg(target_os = "windows")]
-fn cached_snapshot(max_age: std::time::Duration) -> Option<Snapshot> {
-    let guard = match snapshot_cache().lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    guard
-        .as_ref()
-        .and_then(|(taken_at, snapshot)| (taken_at.elapsed() < max_age).then(|| snapshot.clone()))
-}
-
-#[cfg(target_os = "windows")]
-fn store_snapshot(snapshot: &Snapshot) {
-    let mut guard = match snapshot_cache().lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    *guard = Some((std::time::Instant::now(), snapshot.clone()));
+    LAST_SNAPSHOT.get_or_init(SnapshotCache::default)
 }
 
 /// The most recent [`snapshot`], without consuming a PDH collection.
@@ -294,14 +316,7 @@ fn store_snapshot(snapshot: &Snapshot) {
 /// nothing has been sampled yet.
 #[cfg(target_os = "windows")]
 pub fn latest() -> Snapshot {
-    let guard = match snapshot_cache().lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    guard
-        .as_ref()
-        .map(|(_, snapshot)| snapshot.clone())
-        .unwrap_or_default()
+    snapshot_cache().latest().unwrap_or_default()
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -501,6 +516,10 @@ pub fn apply_to_gpu_info(gpu: &mut GpuInfo, metrics: &AdapterMetrics) {
     }
 
     if let Some(utilization) = metrics.utilization {
+        gpu.detail.insert(
+            crate::device::readers::detail_keys::WINDOWS_PDH_UTILIZATION_DETAIL_KEY.to_string(),
+            utilization.to_string(),
+        );
         gpu.utilization = utilization;
         gpu.detail
             .insert("Source: Utilization".to_string(), "PDH".to_string());
@@ -550,6 +569,22 @@ pub fn pair_and_apply(gpus: &mut [GpuInfo], snapshot: &Snapshot) -> AdapterIndex
     }
 
     adapter_index
+}
+
+/// Exclude WMI video-controller rows that are known DXCore NPUs.
+#[cfg(target_os = "windows")]
+pub fn is_npu_controller(snapshot: &Snapshot, name: &str, pnp: Option<&str>) -> bool {
+    let ids = pnp.and_then(ids::parse_pnp_device_id);
+    snapshot.npus.iter().any(|npu| {
+        let adapter = &npu.adapter;
+        let matches_ids =
+            ids.is_some_and(|ids| ids.vendor == adapter.vendor && ids.device == adapter.device);
+        let matches_name = !name.is_empty() && name.eq_ignore_ascii_case(&adapter.name);
+        let gpu_has_same_ids = snapshot.adapters.iter().any(|gpu| {
+            gpu.identity.vendor_id == adapter.vendor && gpu.identity.device_id == adapter.device
+        });
+        matches_name || (matches_ids && !gpu_has_same_ids)
+    })
 }
 
 /// Take a fresh sample and layer it onto `gpus`.
@@ -924,6 +959,8 @@ mod tests {
         Snapshot {
             adapters,
             processes,
+            #[cfg(target_os = "windows")]
+            npus: Vec::new(),
         }
     }
 

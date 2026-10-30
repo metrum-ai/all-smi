@@ -35,7 +35,17 @@ impl Default for AmdXdnaExporter {
 
 impl NpuExporter for AmdXdnaExporter {
     fn can_handle(&self, info: &GpuInfo) -> bool {
-        info.device_type == "NPU" && info.detail.get("driver").is_some_and(|d| d == "amdxdna")
+        info.device_type == "NPU"
+            && (info.detail.get("driver").is_some_and(|d| d == "amdxdna")
+                || (info
+                    .detail
+                    .get("driver")
+                    .is_some_and(|d| d == "windows_dxcore")
+                    && info
+                        .detail
+                        .get("pci_vendor_id")
+                        .is_some_and(|v| v == "1022" || v == "1002")
+                    && info.detail.contains_key("xrt_version")))
     }
 
     fn export_vendor_metrics(
@@ -121,6 +131,30 @@ mod tests {
                 .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
                 .collect(),
         }
+    }
+
+    #[test]
+    fn routes_windows_amd_xrt_without_claiming_unknown_adapters() {
+        let exporter = AmdXdnaExporter::new();
+        let device = npu(&[
+            ("driver", "windows_dxcore"),
+            ("pci_vendor_id", "1022"),
+            ("xrt_version", "2.21.0"),
+            ("firmware_version", "1.1.2.64"),
+        ]);
+        assert!(exporter.can_handle(&device));
+        let mut output = MetricBuilder::new();
+        exporter.export_vendor_metrics(&mut output, &device, 0, "0");
+        assert!(output.build().contains("all_smi_amdxdna_firmware_info"));
+        assert!(!exporter.can_handle(&npu(&[
+            ("driver", "windows_dxcore"),
+            ("pci_vendor_id", "8086"),
+            ("xrt_version", "2.21.0")
+        ])));
+        assert!(!exporter.can_handle(&npu(&[
+            ("driver", "windows_dxcore"),
+            ("pci_vendor_id", "1022")
+        ])));
     }
 
     #[test]

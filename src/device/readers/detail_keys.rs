@@ -61,6 +61,10 @@ pub const SOCKET_POWER_WATTS_DETAIL_KEY: &str = "socket_power_watts";
 pub const GTT_MEMORY_USED_BYTES_DETAIL_KEY: &str = "gtt_memory_used_bytes";
 pub const GTT_MEMORY_TOTAL_BYTES_DETAIL_KEY: &str = "gtt_memory_total_bytes";
 
+/// Raw Windows PDH engine utilization, retained even when a vendor reader
+/// supplies the headline utilization. A volatile percentage, not an info label.
+pub const WINDOWS_PDH_UTILIZATION_DETAIL_KEY: &str = "windows_pdh_utilization";
+
 /// Availability marker used when device memory counters are not exposed.
 pub const MEMORY_STATUS_DETAIL_KEY: &str = "memory_status";
 
@@ -399,6 +403,7 @@ pub const VOLATILE_DETAIL_KEY_PREFIXES: &[&str] = &[
 /// typed.
 pub const VOLATILE_DETAIL_KEYS: &[&str] = &[
     CARD_POWER_WATTS_DETAIL_KEY,
+    WINDOWS_PDH_UTILIZATION_DETAIL_KEY,
     SOCKET_POWER_WATTS_DETAIL_KEY,
     GTT_MEMORY_USED_BYTES_DETAIL_KEY,
     GTT_MEMORY_TOTAL_BYTES_DETAIL_KEY,

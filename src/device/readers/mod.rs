@@ -144,6 +144,18 @@ pub mod intel_gpu_windows;
 #[cfg(any(target_os = "windows", test))]
 pub mod windows_gpu_perf;
 
+#[cfg(target_os = "windows")]
+pub mod windows_npu;
+#[cfg(target_os = "windows")]
+pub mod windows_npu_dxcore;
+
+#[cfg(any(target_os = "windows", test))]
+pub mod windows_npu_metrics;
+
+// Best-effort XRT enrichment; parsing is exercised on all test hosts.
+#[cfg(any(target_os = "windows", test))]
+pub mod windows_npu_xrt;
+
 // AMD ADL sensor augmentation (temperature, power, fan, clocks) layered
 // on top of `windows_gpu_perf`. Gated the same way and for the same
 // reason: the sensor-index mapping and the field application are the
