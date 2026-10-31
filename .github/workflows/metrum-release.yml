@@ -46,7 +46,7 @@ jobs:
             {"os_family":"linux", "target":"x86_64-unknown-linux-gnu",  "os":"all-smi-arc",      "artifact_name":"all-smi", "asset_name":"all-smi-linux-x86_64",      "archive_ext":".tar.gz", "protoc_platform":"linux-x86_64"},
             {"os_family":"linux", "target":"x86_64-unknown-linux-musl", "os":"all-smi-arc",      "artifact_name":"all-smi", "asset_name":"all-smi-linux-x86_64-musl", "archive_ext":".tar.gz", "protoc_platform":"linux-x86_64"},
             {"os_family":"linux", "target":"aarch64-unknown-linux-gnu", "os":"all-smi-arc",   "artifact_name":"all-smi", "asset_name":"all-smi-linux-aarch64",     "archive_ext":".tar.gz", "protoc_platform":"linux-x86_64"},
-            {"os_family":"macos", "target":"aarch64-apple-darwin",      "os":"macos-14",           "artifact_name":"all-smi", "asset_name":"all-smi-macos-aarch64",     "archive_ext":".zip",    "protoc_platform":"osx-aarch_64"}
+            {"os_family":"macos", "target":"aarch64-apple-darwin",      "os":"macos-15",           "artifact_name":"all-smi", "asset_name":"all-smi-macos-aarch64",     "archive_ext":".zip",    "protoc_platform":"osx-aarch_64"}
           ]'
           sel="$(printf '%s' "${TARGETS:-}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
           if [ -z "$sel" ]; then sel="all"; fi
