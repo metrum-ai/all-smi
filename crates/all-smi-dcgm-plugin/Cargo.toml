@@ -7,7 +7,7 @@ authors = ["Metrum AI <engineering@metrum.ai>"]
 license = "Apache-2.0"
 repository = "https://github.com/metrum-ai/all-smi"
 edition = "2024"
-rust-version = "1.96"
+rust-version = "1.97"
 publish = false
 
 [lib]
