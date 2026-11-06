@@ -39,7 +39,7 @@ jobs:
   # there is a single source of truth for the platform list.
   setup:
     name: Resolve build matrix
-    runs-on: all-smi-arc
+    runs-on: aws-pub-4c
     outputs:
       includes: ${{ steps.resolve.outputs.includes }}
       all_assets: ${{ steps.resolve.outputs.all_assets }}
@@ -68,10 +68,10 @@ jobs:
           # matrix job instance, so the two shapes coexist without affecting each
           # other.
           ALL='[
-            {"os_family":"linux",   "target":"x86_64-unknown-linux-gnu",    "os":"all-smi-arc",             "artifact_name":"all-smi",     "asset_name":"all-smi-linux-x86_64",       "archive_ext":".tar.gz", "protoc_platform":"linux-x86_64"},
-            {"os_family":"linux",   "target":"x86_64-unknown-linux-musl",   "os":"all-smi-arc",           "artifact_name":"all-smi",     "asset_name":"all-smi-linux-x86_64-musl",  "archive_ext":".tar.gz", "protoc_platform":"linux-x86_64"},
-            {"os_family":"linux",   "target":"aarch64-unknown-linux-gnu",   "os":"all-smi-arc",        "artifact_name":"all-smi",     "asset_name":"all-smi-linux-aarch64",      "archive_ext":".tar.gz", "protoc_platform":"linux-aarch_64"},
-            {"os_family":"linux",   "target":"aarch64-unknown-linux-musl",  "os":"all-smi-arc",        "artifact_name":"all-smi",     "asset_name":"all-smi-linux-aarch64-musl", "archive_ext":".tar.gz", "protoc_platform":"linux-aarch_64"},
+            {"os_family":"linux",   "target":"x86_64-unknown-linux-gnu",    "os":"aws-pub-4c",             "artifact_name":"all-smi",     "asset_name":"all-smi-linux-x86_64",       "archive_ext":".tar.gz", "protoc_platform":"linux-x86_64"},
+            {"os_family":"linux",   "target":"x86_64-unknown-linux-musl",   "os":"aws-pub-4c",           "artifact_name":"all-smi",     "asset_name":"all-smi-linux-x86_64-musl",  "archive_ext":".tar.gz", "protoc_platform":"linux-x86_64"},
+            {"os_family":"linux",   "target":"aarch64-unknown-linux-gnu",   "os":"aws-pub-4c",        "artifact_name":"all-smi",     "asset_name":"all-smi-linux-aarch64",      "archive_ext":".tar.gz", "protoc_platform":"linux-aarch_64"},
+            {"os_family":"linux",   "target":"aarch64-unknown-linux-musl",  "os":"aws-pub-4c",        "artifact_name":"all-smi",     "asset_name":"all-smi-linux-aarch64-musl", "archive_ext":".tar.gz", "protoc_platform":"linux-aarch_64"},
             {"os_family":"macos",   "target":"aarch64-apple-darwin",        "os":"macos-15",                "artifact_name":"all-smi",     "asset_name":"all-smi-macos-aarch64",      "archive_ext":".zip",    "protoc_platform":"osx-aarch_64"},
             {"os_family":"macos",   "target":"x86_64-apple-darwin",         "os":{"group":"macOS x64","labels":"self-hosted-macos-15-x64"}, "artifact_name":"all-smi", "asset_name":"all-smi-macos-x86_64", "archive_ext":".zip", "protoc_platform":"osx-x86_64"},
             {"os_family":"windows", "target":"x86_64-pc-windows-msvc",      "os":"windows-on-macmini02-x64","artifact_name":"all-smi.exe", "asset_name":"all-smi-windows-x86_64",     "archive_ext":".zip",    "protoc_platform":""},
@@ -689,7 +689,7 @@ jobs:
     name: Notify Teams on release
     needs: [build, sign-windows-arm64]
     if: github.event_name == 'release'
-    runs-on: all-smi-arc
+    runs-on: aws-pub-4c
     permissions: {}
 
     steps:
@@ -743,7 +743,7 @@ jobs:
 
   promote-release:
     name: Promote pre-release to release
-    runs-on: all-smi-arc
+    runs-on: aws-pub-4c
     needs: [setup, build, sign-windows-arm64]
     # A dispatch has to be able to finish a release too, not only build one.
     # The recovery path this workflow documents (dispatch a fixed release.yml

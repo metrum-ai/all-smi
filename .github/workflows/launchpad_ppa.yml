@@ -18,7 +18,7 @@ permissions:
 jobs:
   upload-ppa:
     name: Upload to PPA (${{ matrix.distro }})
-    runs-on: all-smi-arc
+    runs-on: aws-pub-4c
     environment: packaging
     strategy:
       fail-fast: false

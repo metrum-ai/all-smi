@@ -44,42 +44,42 @@ jobs:
           - distro: jammy
             version: "22.04"
             arch: amd64
-            os: all-smi-arc
+            os: aws-pub-4c
             binary_asset: all-smi-linux-x86_64.tar.gz
 
           # Ubuntu 22.04 LTS (Jammy) - ARM64
           - distro: jammy
             version: "22.04"
             arch: arm64
-            os: all-smi-arc
+            os: aws-pub-4c
             binary_asset: all-smi-linux-aarch64.tar.gz
           
           # Ubuntu 24.04 LTS (Noble) - AMD64
           - distro: noble
             version: "24.04"
             arch: amd64
-            os: all-smi-arc
+            os: aws-pub-4c
             binary_asset: all-smi-linux-x86_64.tar.gz
           
           # Ubuntu 24.04 LTS (Noble) - ARM64
           - distro: noble
             version: "24.04"
             arch: arm64
-            os: all-smi-arc
+            os: aws-pub-4c
             binary_asset: all-smi-linux-aarch64.tar.gz
           
           # Ubuntu 26.04 LTS (Resolute) - AMD64
           - distro: resolute
             version: "26.04"
             arch: amd64
-            os: all-smi-arc
+            os: aws-pub-4c
             binary_asset: all-smi-linux-x86_64.tar.gz
 
           # Ubuntu 26.04 LTS (Resolute) - ARM64
           - distro: resolute
             version: "26.04"
             arch: arm64
-            os: all-smi-arc
+            os: aws-pub-4c
             binary_asset: all-smi-linux-aarch64.tar.gz
     
     steps:
