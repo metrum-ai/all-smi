@@ -29,7 +29,7 @@ permissions:
 jobs:
   links:
     name: Documentation links
-    runs-on: all-smi-arc
+    runs-on: aws-pub-4c
     steps:
       - name: Install documentation prerequisites
         run: |

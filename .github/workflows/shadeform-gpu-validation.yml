@@ -15,7 +15,7 @@ jobs:
   gpu-validation:
     name: Shadeform NVIDIA GPU Validation
     if: github.ref == 'refs/heads/main'
-    runs-on: all-smi-arc
+    runs-on: aws-pub-4c
     timeout-minutes: 60
     steps:
       - name: Install Shadeform runner prerequisites

@@ -13,7 +13,7 @@ env:
 jobs:
   test:
     name: Test Suite
-    runs-on: all-smi-arc
+    runs-on: aws-pub-4c
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -233,7 +233,7 @@ jobs:
   # ───────────────────────────────────────────────────────────────
   packaging-sync:
     name: Packaging Sync Check
-    runs-on: all-smi-arc
+    runs-on: aws-pub-4c
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -1095,7 +1095,7 @@ jobs:
 
   build-check:
     name: Build Check
-    runs-on: all-smi-arc
+    runs-on: aws-pub-4c
     needs: test
     steps:
       - name: Checkout

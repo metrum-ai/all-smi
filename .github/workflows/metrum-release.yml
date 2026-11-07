@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Metrum AI, Inc. All rights reserved.
 #
-# Metrum fork release builder. Linux on ARC DOKS, macOS ARM64 hosted — no
+# Metrum fork release builder. Linux on ARC (AWS, aws-pub-4c), macOS ARM64 hosted — no
 # Windows/Intel-Mac signing hosts, Apple notarization, Homebrew/PPA/Teams.
 # Do not publish a public tag until after P4 (real GPM + DCGM plugin).
 # Tags use a metrum suffix (e.g. v0.26.3-metrum.1) so they never collide
@@ -27,7 +27,7 @@ permissions:
 jobs:
   setup:
     name: Resolve build matrix
-    runs-on: all-smi-arc
+    runs-on: aws-pub-4c
     outputs:
       includes: ${{ steps.resolve.outputs.includes }}
     steps:
@@ -43,9 +43,9 @@ jobs:
         run: |
           set -euo pipefail
           ALL='[
-            {"os_family":"linux", "target":"x86_64-unknown-linux-gnu",  "os":"all-smi-arc",      "artifact_name":"all-smi", "asset_name":"all-smi-linux-x86_64",      "archive_ext":".tar.gz", "protoc_platform":"linux-x86_64"},
-            {"os_family":"linux", "target":"x86_64-unknown-linux-musl", "os":"all-smi-arc",      "artifact_name":"all-smi", "asset_name":"all-smi-linux-x86_64-musl", "archive_ext":".tar.gz", "protoc_platform":"linux-x86_64"},
-            {"os_family":"linux", "target":"aarch64-unknown-linux-gnu", "os":"all-smi-arc",   "artifact_name":"all-smi", "asset_name":"all-smi-linux-aarch64",     "archive_ext":".tar.gz", "protoc_platform":"linux-x86_64"},
+            {"os_family":"linux", "target":"x86_64-unknown-linux-gnu",  "os":"aws-pub-4c",      "artifact_name":"all-smi", "asset_name":"all-smi-linux-x86_64",      "archive_ext":".tar.gz", "protoc_platform":"linux-x86_64"},
+            {"os_family":"linux", "target":"x86_64-unknown-linux-musl", "os":"aws-pub-4c",      "artifact_name":"all-smi", "asset_name":"all-smi-linux-x86_64-musl", "archive_ext":".tar.gz", "protoc_platform":"linux-x86_64"},
+            {"os_family":"linux", "target":"aarch64-unknown-linux-gnu", "os":"aws-pub-4c",   "artifact_name":"all-smi", "asset_name":"all-smi-linux-aarch64",     "archive_ext":".tar.gz", "protoc_platform":"linux-x86_64"},
             {"os_family":"macos", "target":"aarch64-apple-darwin",      "os":"macos-15",           "artifact_name":"all-smi", "asset_name":"all-smi-macos-aarch64",     "archive_ext":".zip",    "protoc_platform":"osx-aarch_64"}
           ]'
           sel="$(printf '%s' "${TARGETS:-}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
