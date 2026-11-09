@@ -1545,7 +1545,6 @@ mod tests {
     fn make_cpu() -> crate::device::CpuInfo {
         use crate::device::{CoreType, CoreUtilization, CpuPlatformType};
         crate::device::CpuInfo {
-            index: 0,
             host_id: "localhost".to_string(),
             hostname: "testhost".to_string(),
             instance: "testhost".to_string(),
@@ -1561,16 +1560,15 @@ mod tests {
             utilization: 37.5,
             temperature: Some(55),
             power_consumption: Some(18.0),
-            per_socket_info: Vec::new(),
-            apple_silicon_info: None,
             per_core_utilization: (0..4)
                 .map(|i| CoreUtilization {
                     core_id: i,
                     core_type: CoreType::Standard,
                     utilization: f64::from(i) * 20.0,
+                    tier_index: None,
                 })
                 .collect(),
-            time: String::new(),
+            ..crate::device::CpuInfo::test_default()
         }
     }
 

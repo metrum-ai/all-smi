@@ -203,6 +203,7 @@ impl Default for GpmState {
 /// that never populate activity fields). Temporary sample handles are freed
 /// before returning. Returns `None` when GPM is disabled, unsupported, or
 /// either sample / `gpm_metrics_get` fails.
+#[cfg(feature = "cli")]
 pub(crate) fn probe_two_sample(
     nvml: &Nvml,
     device: &Device<'_>,

@@ -22,11 +22,14 @@ use std::time::Duration;
 use crate::doctor::exec::try_exec;
 use crate::doctor::types::{Check, CheckCtx, CheckResult, Severity};
 
+mod gpu_metrics;
+
 static CHECKS: &[&Check] = &[
     &ROCM_VERSION,
     &RAPL_ACCESS,
     &UMC_BANDWIDTH,
     &LIBAMDGPU_TOP_ABI,
+    &gpu_metrics::GPU_METRICS_REVISION,
     &DRI_PERMS,
     &BUILD_GATE,
     &ADL_LIBRARY,
@@ -499,7 +502,7 @@ fn check_adl_sensors(_ctx: &CheckCtx) -> CheckResult {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", test))]
 fn rocm_version_from_root(root: &std::path::Path) -> Option<(String, std::path::PathBuf)> {
     let direct_version_files = [
         root.join(".info/version"),
@@ -540,14 +543,14 @@ fn rocm_version_from_root(root: &std::path::Path) -> Option<(String, std::path::
     None
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", test))]
 fn read_rocm_version_file(path: &std::path::Path) -> Option<(String, std::path::PathBuf)> {
     let version = std::fs::read_to_string(path).ok()?;
     let version = version.trim();
     (!version.is_empty()).then(|| (version.to_string(), path.to_path_buf()))
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", test))]
 fn read_rocm_version_header(path: &std::path::Path) -> Option<(String, std::path::PathBuf)> {
     let contents = std::fs::read_to_string(path).ok()?;
     parse_rocm_version_header(&contents).map(|version| (version, path.to_path_buf()))
@@ -572,7 +575,7 @@ fn sort_versioned_paths(paths: &mut [std::path::PathBuf]) {
     });
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", test))]
 fn parse_rocm_version_header(contents: &str) -> Option<String> {
     let value = |key: &str| {
         contents.lines().find_map(|line| {
@@ -752,11 +755,9 @@ fn describe_umc_bandwidth_availability(umc_count: usize, paranoid: Option<i32>) 
 fn check_rocm(_ctx: &CheckCtx) -> CheckResult {
     #[cfg(target_os = "linux")]
     {
-        let roots = rocm_roots();
-        for root in &roots {
-            if let Some((version, source)) = rocm_version_from_root(root) {
-                return CheckResult::Pass(format!("ROCm {version} ({})", source.display()));
-            }
+        // Prefer the shared detector, including librocm-core and ROCm 7.x layouts.
+        if let Some(rocm) = crate::device::readers::amd_rocm::detect_rocm_version() {
+            return CheckResult::Pass(format!("ROCm {} ({})", rocm.version, rocm.source));
         }
         if let Some(out) = try_exec("amd-smi", &["version"], Duration::from_millis(2_500))
             && out.success()
@@ -770,7 +771,7 @@ fn check_rocm(_ctx: &CheckCtx) -> CheckResult {
         {
             return CheckResult::Pass(version);
         }
-        for root in roots {
+        for root in rocm_roots() {
             if root.exists() && is_rocm_root(&root) {
                 return CheckResult::Pass(format!(
                     "ROCm present, version unknown ({})",

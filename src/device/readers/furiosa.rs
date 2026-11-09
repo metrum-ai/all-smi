@@ -554,6 +554,10 @@ fn first_pe_frequency_mhz(core_freq: &furiosa_smi_rs::CoreFrequency) -> u32 {
 }
 
 /// Create GpuInfo from RS API data using cached static info
+///
+/// The eight parameters are the cached static block plus the five dynamic
+/// samples one poll produces. Bundling them into a struct would change the
+/// polling shape, which is a separate refactor (issue #479).
 #[cfg(all(target_os = "linux", feature = "furiosa-smi-rs"))]
 #[allow(clippy::too_many_arguments)]
 fn create_gpu_info_from_device_2025_cached(

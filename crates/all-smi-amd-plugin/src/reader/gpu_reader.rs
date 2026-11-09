@@ -118,22 +118,15 @@ impl GpuReader for AmdGpuReader {
                 )
             });
 
-            let mut utilization = 0.0;
+            let mut metrics_gfx_activity = None;
             let mut power_consumption = 0.0;
             let mut apu_gfx_power_available = false;
-            let mut temperature: u32 = 0;
+            let mut metrics_edge_temp: Option<u32> = None;
             let mut frequency: u32 = 0;
 
             // Try to get metrics from GpuMetrics first with validation
             if let Ok(metrics) = GpuMetrics::get_from_sysfs_path(&device.device_path.sysfs_path) {
-                if let Some(gfx_activity) = metrics
-                    .get_average_gfx_activity()
-                    .and_then(valid_metrics_percent)
-                {
-                    // Reject the u16::MAX unsupported sentinel and values
-                    // outside the utilization percentage domain.
-                    utilization = gfx_activity.clamp(0.0, MAX_GPU_UTILIZATION);
-                }
+                metrics_gfx_activity = metrics.get_average_gfx_activity();
                 // v1.4 / v1.5 tables carry `curr_socket_power` and no
                 // average; every other table carries the average only.
                 let socket_power = metrics
@@ -224,13 +217,10 @@ impl GpuReader for AmdGpuReader {
                     );
                 }
 
-                if let Some(temp) = metrics
+                metrics_edge_temp = metrics
                     .get_temperature_edge()
                     .and_then(valid_metrics_u16)
-                {
-                    // Validate temperature after rejecting the unsupported sentinel.
-                    temperature = u32::from(temp).min(MAX_GPU_TEMP_CELSIUS);
-                }
+                    .map(u32::from);
                 if let Some(freq) = metrics
                     .get_current_gfxclk()
                     .and_then(valid_metrics_u16)
@@ -240,23 +230,32 @@ impl GpuReader for AmdGpuReader {
                 }
             }
 
+            // gpu_metrics revisions libamdgpu_top cannot parse yield no GFX
+            // activity at all; only then fall back to the kernel's busy counter.
+            let utilization = select_gfx_activity(metrics_gfx_activity, || {
+                read_gpu_busy_percent(&device.device_path.sysfs_path)
+            });
+
+            let temperature = select_temperature_celsius(
+                metrics_edge_temp,
+                sensors
+                    .as_ref()
+                    .and_then(|s| s.edge_temp.as_ref())
+                    .map(|t| t.current.max(0) as u32),
+                sensors
+                    .as_ref()
+                    .and_then(|s| s.junction_temp.as_ref())
+                    .map(|t| t.current.max(0) as u32),
+            );
+
             // Fallback to sensors if metrics failed or missing (with validation)
             if let Some(ref s) = sensors {
-                if utilization == 0.0 {
-                    // Approximate utilization from load if available, or leave 0
-                    // libamdgpu_top doesn't expose a simple "gpu load" sensor easily without GpuMetrics or fdinfo
-                }
                 if power_consumption == 0.0 && !apu_gfx_power_available {
                     if let Some(ref p) = s.average_power {
                         power_consumption = hwmon_power_watts(p.value);
                     } else if let Some(ref p) = s.input_power {
                         power_consumption = hwmon_power_watts(p.value);
                     }
-                }
-                if temperature == 0
-                    && let Some(ref t) = s.edge_temp
-                {
-                    temperature = (t.current as u32).min(MAX_GPU_TEMP_CELSIUS);
                 }
                 if frequency == 0
                     && let Some(clk) = s.sclk
@@ -400,6 +399,9 @@ impl GpuReader for AmdGpuReader {
                 .with_cpu()
                 .with_memory()
                 .with_user(UpdateKind::OnlyIfNotSet);
+            // The plugin owns its own copy of the global System, which nothing
+            // else refreshes; without this total_memory() stays 0.
+            system.refresh_memory();
             system.refresh_processes_specifics(ProcessesToUpdate::All, true, refresh_kind);
             all_smi::device::process_list::get_all_processes(system, &gpu_pids)
         });
