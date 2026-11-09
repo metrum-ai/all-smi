@@ -23,9 +23,9 @@ use regex::Regex;
 use crate::device::cpu_topology::{coarse_core_type, tier_rank};
 use crate::device::types::{GPU_METRIC_UNAVAILABLE, MAX_GPU_FAN_RPM};
 use crate::device::{
-    AppleSiliconCpuInfo, CpuInfo, CpuPlatformType, CpuTier, GpmMetrics, GpuInfo, MemoryInfo, MigGpuInfo,
-    MigInstanceInfo, NvLinkErrorCount, NvLinkRemoteDevice, NvLinkRemoteType, RemappedRowsInfo,
-    TelemetrySource, ThrottleReasons, UtilizationSample, VgpuHostInfo, VgpuInfo,
+    AppleSiliconCpuInfo, CpuInfo, CpuPlatformType, CpuTier, GpmMetrics, GpuInfo, MemoryInfo,
+    MigGpuInfo, MigInstanceInfo, NvLinkErrorCount, NvLinkRemoteDevice, NvLinkRemoteType,
+    RemappedRowsInfo, TelemetrySource, ThrottleReasons, UtilizationSample, VgpuHostInfo, VgpuInfo,
 };
 use crate::storage::info::StorageInfo;
 

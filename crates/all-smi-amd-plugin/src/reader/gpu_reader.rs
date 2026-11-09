@@ -118,23 +118,15 @@ impl GpuReader for AmdGpuReader {
                 )
             });
 
-            let mut utilization = 0.0;
+            let mut metrics_gfx_activity = None;
             let mut power_consumption = 0.0;
             let mut apu_gfx_power_available = false;
             let mut metrics_edge_temp: Option<u32> = None;
             let mut frequency: u32 = 0;
-            let mut metrics_has_gfx_activity = false;
 
             // Try to get metrics from GpuMetrics first with validation
             if let Ok(metrics) = GpuMetrics::get_from_sysfs_path(&device.device_path.sysfs_path) {
-                if let Some(gfx_activity) = metrics
-                    .get_average_gfx_activity()
-                    .and_then(valid_metrics_percent)
-                {
-                    // Reject unsupported sentinels before applying the sysfs fallback.
-                    utilization = gfx_activity.clamp(0.0, MAX_GPU_UTILIZATION);
-                    metrics_has_gfx_activity = true;
-                }
+                metrics_gfx_activity = metrics.get_average_gfx_activity();
                 // v1.4 / v1.5 tables carry `curr_socket_power` and no
                 // average; every other table carries the average only.
                 let socket_power = metrics
@@ -240,11 +232,9 @@ impl GpuReader for AmdGpuReader {
 
             // gpu_metrics revisions libamdgpu_top cannot parse yield no GFX
             // activity at all; only then fall back to the kernel's busy counter.
-            if !metrics_has_gfx_activity
-                && let Some(busy) = read_gpu_busy_percent(&device.device_path.sysfs_path)
-            {
-                utilization = busy;
-            }
+            let utilization = select_gfx_activity(metrics_gfx_activity, || {
+                read_gpu_busy_percent(&device.device_path.sysfs_path)
+            });
 
             let temperature = select_temperature_celsius(
                 metrics_edge_temp,

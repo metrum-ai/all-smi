@@ -395,6 +395,14 @@ fn read_gpu_busy_percent(sysfs_path: &std::path::Path) -> Option<f64> {
         .and_then(|raw| parse_gpu_busy_percent(&raw))
 }
 
+// Keep sentinel rejection ahead of the lazy sysfs fallback for APUs and dGPUs.
+fn select_gfx_activity(raw: Option<u16>, busy_percent: impl FnOnce() -> Option<f64>) -> f64 {
+    raw.and_then(valid_metrics_percent)
+        .or_else(busy_percent)
+        .unwrap_or(0.0)
+        .clamp(0.0, MAX_GPU_UTILIZATION)
+}
+
 fn parse_gpu_busy_percent(raw: &str) -> Option<f64> {
     raw.trim()
         .parse::<u32>()

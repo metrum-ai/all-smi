@@ -475,6 +475,20 @@ mod tests {
     }
 
     #[test]
+    fn sentinel_gfx_activity_falls_back_to_busy_percent() {
+        assert_eq!(select_gfx_activity(Some(u16::MAX), || Some(37.0)), 37.0);
+        assert_eq!(select_gfx_activity(None, || Some(42.0)), 42.0);
+        assert_eq!(select_gfx_activity(Some(0), || panic!("valid idle sample")), 0.0);
+        assert_eq!(select_gfx_activity(Some(65), || panic!("valid sample")), 65.0);
+        assert_eq!(select_gfx_activity(Some(u16::MAX), || None), 0.0);
+    }
+
+    #[test]
+    fn apu_edge_temperature_is_unchanged() {
+        assert_eq!(select_temperature_celsius(Some(52), Some(54), Some(80)), 52);
+    }
+
+    #[test]
     fn gpu_busy_percent_parses_sysfs_value() {
         assert_eq!(parse_gpu_busy_percent("37\n"), Some(37.0));
         assert_eq!(parse_gpu_busy_percent("0"), Some(0.0));
