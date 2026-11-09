@@ -502,7 +502,7 @@ fn check_adl_sensors(_ctx: &CheckCtx) -> CheckResult {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", test))]
 fn rocm_version_from_root(root: &std::path::Path) -> Option<(String, std::path::PathBuf)> {
     let direct_version_files = [
         root.join(".info/version"),
@@ -543,14 +543,14 @@ fn rocm_version_from_root(root: &std::path::Path) -> Option<(String, std::path::
     None
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", test))]
 fn read_rocm_version_file(path: &std::path::Path) -> Option<(String, std::path::PathBuf)> {
     let version = std::fs::read_to_string(path).ok()?;
     let version = version.trim();
     (!version.is_empty()).then(|| (version.to_string(), path.to_path_buf()))
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", test))]
 fn read_rocm_version_header(path: &std::path::Path) -> Option<(String, std::path::PathBuf)> {
     let contents = std::fs::read_to_string(path).ok()?;
     parse_rocm_version_header(&contents).map(|version| (version, path.to_path_buf()))
@@ -575,7 +575,7 @@ fn sort_versioned_paths(paths: &mut [std::path::PathBuf]) {
     });
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", test))]
 fn parse_rocm_version_header(contents: &str) -> Option<String> {
     let value = |key: &str| {
         contents.lines().find_map(|line| {
