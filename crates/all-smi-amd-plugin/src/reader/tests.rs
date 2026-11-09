@@ -450,4 +450,77 @@ mod tests {
         assert_eq!(metrics_socket_power_watts(0, 148), None);
         assert_eq!(metrics_socket_power_watts(4, 148), None);
     }
+
+    /// Cards with an edge sensor keep reporting it exactly as before,
+    /// whatever the junction sensor reads.
+    #[test]
+    fn temperature_prefers_edge_when_present() {
+        assert_eq!(select_temperature_celsius(Some(45), Some(50), Some(70)), 45);
+        assert_eq!(select_temperature_celsius(None, Some(50), Some(70)), 50);
+        assert_eq!(select_temperature_celsius(Some(0), Some(50), Some(70)), 50);
+        // An edge sensor that exists but reads 0 is not replaced by junction.
+        assert_eq!(select_temperature_celsius(Some(0), None, Some(70)), 0);
+        assert_eq!(select_temperature_celsius(None, Some(0), Some(70)), 0);
+    }
+
+    /// MI300-series boards expose no edge sensor at all; report junction.
+    #[test]
+    fn temperature_falls_back_to_junction_without_edge_sensor() {
+        assert_eq!(select_temperature_celsius(None, None, Some(38)), 38);
+        assert_eq!(select_temperature_celsius(None, None, None), 0);
+        assert_eq!(
+            select_temperature_celsius(None, None, Some(400)),
+            MAX_GPU_TEMP_CELSIUS
+        );
+    }
+
+    #[test]
+    fn gpu_busy_percent_parses_sysfs_value() {
+        assert_eq!(parse_gpu_busy_percent("37\n"), Some(37.0));
+        assert_eq!(parse_gpu_busy_percent("0"), Some(0.0));
+        assert_eq!(parse_gpu_busy_percent("250"), Some(MAX_GPU_UTILIZATION));
+        assert_eq!(parse_gpu_busy_percent(""), None);
+        assert_eq!(parse_gpu_busy_percent("-1"), None);
+    }
+
+    /// `gpu_metrics_supported` mirrors the `match` in
+    /// `libdrm_amdgpu_sys::GpuMetrics::from_raw`. That crate is a transitive
+    /// dependency of the pinned `libamdgpu_top`, so its version can move on a
+    /// `cargo update` without the pin changing. `from_raw` dispatches on the
+    /// four-byte header alone, so a four-byte buffer exercises the whole
+    /// decision; the sweep fails in either direction the moment the parser and
+    /// the shared table disagree.
+    #[test]
+    fn gpu_metrics_supported_matches_the_pinned_parser() {
+        use all_smi::device::readers::amd_plugin_api::gpu_metrics_supported;
+
+        fn header_bytes(format_revision: u8, content_revision: u8) -> [u8; 4] {
+            let mut bytes = [0u8; 4];
+            bytes[..2].copy_from_slice(&4u16.to_le_bytes());
+            bytes[2] = format_revision;
+            bytes[3] = content_revision;
+            bytes
+        }
+
+        for format_revision in 0..=u8::MAX {
+            for content_revision in 0..=u8::MAX {
+                let raw = header_bytes(format_revision, content_revision);
+                let parsed = !matches!(GpuMetrics::from_raw(&raw), GpuMetrics::Unknown);
+                assert_eq!(
+                    parsed,
+                    gpu_metrics_supported(format_revision, content_revision),
+                    "parser and gpu_metrics_supported disagree on format {format_revision} content {content_revision}"
+                );
+            }
+        }
+
+        // The MI300X on amdgpu 6.19 table that the hwmon and
+        // gpu_busy_percent fallbacks exist for.
+        assert!(matches!(
+            GpuMetrics::from_raw(&header_bytes(1, 9)),
+            GpuMetrics::Unknown
+        ));
+        assert!(gpu_metrics_supported(1, 5));
+        assert!(!gpu_metrics_supported(1, 9));
+    }
 }

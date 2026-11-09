@@ -22,11 +22,14 @@ use std::time::Duration;
 use crate::doctor::exec::try_exec;
 use crate::doctor::types::{Check, CheckCtx, CheckResult, Severity};
 
+mod gpu_metrics;
+
 static CHECKS: &[&Check] = &[
     &ROCM_VERSION,
     &RAPL_ACCESS,
     &UMC_BANDWIDTH,
     &LIBAMDGPU_TOP_ABI,
+    &gpu_metrics::GPU_METRICS_REVISION,
     &DRI_PERMS,
     &BUILD_GATE,
     &ADL_LIBRARY,
@@ -752,11 +755,9 @@ fn describe_umc_bandwidth_availability(umc_count: usize, paranoid: Option<i32>) 
 fn check_rocm(_ctx: &CheckCtx) -> CheckResult {
     #[cfg(target_os = "linux")]
     {
-        let roots = rocm_roots();
-        for root in &roots {
-            if let Some((version, source)) = rocm_version_from_root(root) {
-                return CheckResult::Pass(format!("ROCm {version} ({})", source.display()));
-            }
+        // Prefer the shared detector, including librocm-core and ROCm 7.x layouts.
+        if let Some(rocm) = crate::device::readers::amd_rocm::detect_rocm_version() {
+            return CheckResult::Pass(format!("ROCm {} ({})", rocm.version, rocm.source));
         }
         if let Some(out) = try_exec("amd-smi", &["version"], Duration::from_millis(2_500))
             && out.success()
@@ -770,7 +771,7 @@ fn check_rocm(_ctx: &CheckCtx) -> CheckResult {
         {
             return CheckResult::Pass(version);
         }
-        for root in roots {
+        for root in rocm_roots() {
             if root.exists() && is_rocm_root(&root) {
                 return CheckResult::Pass(format!(
                     "ROCm present, version unknown ({})",

@@ -85,6 +85,8 @@ pub mod amd_plugin_api;
 pub mod dcgm;
 #[cfg(all(target_os = "linux", not(target_env = "musl")))]
 pub mod dcgm_plugin_api;
+#[cfg(target_os = "linux")]
+pub mod amd_rocm;
 
 #[cfg(target_os = "windows")]
 pub mod amd_windows;

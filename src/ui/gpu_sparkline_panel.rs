@@ -535,7 +535,9 @@ fn draw_sparkline_row<W: Write>(stdout: &mut W, row: &SparklineRow, panel_width:
 const COMPACT_LABEL_WIDTH: usize = 4;
 /// Latest-value column width in a compact half-cell (fits `1400.0W`, `100.0%`).
 const COMPACT_VALUE_WIDTH: usize = 7;
-/// Scale-badge column width in a compact half-cell (fits `0-100`, `0-350`).
+/// Minimum scale-badge column width in a compact half-cell (fits `0-100`,
+/// `0-350`). Wider badges such as an MI300X's `150-750` W axis widen the
+/// column and take the extra columns from the sparkline.
 const COMPACT_BADGE_WIDTH: usize = 5;
 
 /// Render the GPU Util metric as a stacked multi-row history graph on a fixed
@@ -597,7 +599,8 @@ fn draw_compact_cell<W: Write>(stdout: &mut W, row: Option<&SparklineRow>, budge
     };
 
     // label + " " + spark + " " + value + badge
-    let fixed = COMPACT_LABEL_WIDTH + 1 + 1 + COMPACT_VALUE_WIDTH + COMPACT_BADGE_WIDTH;
+    let badge_width = row.min_max_str.chars().count().max(COMPACT_BADGE_WIDTH);
+    let fixed = COMPACT_LABEL_WIDTH + 1 + 1 + COMPACT_VALUE_WIDTH + badge_width;
     let spark_width = budget.saturating_sub(fixed).max(1);
     let spark = sparkline_braille(&row.history, spark_width, row.range);
 
@@ -608,7 +611,7 @@ fn draw_compact_cell<W: Write>(stdout: &mut W, row: Option<&SparklineRow>, budge
         (&spark, spark_width, row.color),
         (" ", 1, Color::White),
         (&row.latest_str, COMPACT_VALUE_WIDTH, Color::White),
-        (&row.min_max_str, COMPACT_BADGE_WIDTH, Color::DarkGrey),
+        (&row.min_max_str, badge_width, Color::DarkGrey),
     ];
     for (text, width, color) in segments {
         if remaining == 0 {
@@ -825,17 +828,15 @@ mod tests {
                 core_id: i as u32,
                 core_type: CoreType::Standard,
                 utilization: (i as f64 * 10.0) % 100.0,
+                tier_index: None,
             })
             .collect();
 
         CpuInfo {
-            index: 0,
             host_id: "localhost".to_string(),
             hostname: "testhost".to_string(),
-            instance: "".to_string(),
             cpu_model: "Test CPU".to_string(),
             architecture: "x86_64".to_string(),
-            platform_type: CpuPlatformType::Intel,
             socket_count: 1,
             total_cores: core_count as u32,
             total_threads: core_count as u32 * 2,
@@ -845,10 +846,8 @@ mod tests {
             utilization: 50.0,
             temperature: Some(65),
             power_consumption: Some(95.0),
-            per_socket_info: Vec::new(),
-            apple_silicon_info: None,
             per_core_utilization: per_core,
-            time: String::new(),
+            ..CpuInfo::test_default()
         }
     }
 
@@ -859,6 +858,7 @@ mod tests {
                 core_id: i as u32,
                 core_type: CoreType::Efficiency,
                 utilization: 20.0 + i as f64 * 5.0,
+                tier_index: None,
             });
         }
         for i in 0..8 {
@@ -866,13 +866,12 @@ mod tests {
                 core_id: (4 + i) as u32,
                 core_type: CoreType::Performance,
                 utilization: 40.0 + i as f64 * 5.0,
+                tier_index: None,
             });
         }
         CpuInfo {
-            index: 0,
             host_id: "localhost".to_string(),
             hostname: "testhost".to_string(),
-            instance: "".to_string(),
             cpu_model: "Apple M2 Pro".to_string(),
             architecture: "arm64".to_string(),
             platform_type: CpuPlatformType::AppleSilicon,
@@ -883,9 +882,6 @@ mod tests {
             max_frequency_mhz: 3490,
             cache_size_mb: 16,
             utilization: 35.0,
-            temperature: None,
-            power_consumption: None,
-            per_socket_info: Vec::new(),
             apple_silicon_info: Some(AppleSiliconCpuInfo {
                 s_core_count: 0,
                 p_core_count: 8,
@@ -903,12 +899,12 @@ mod tests {
                 e_core_l2_cache_mb: Some(4),
             }),
             per_core_utilization: per_core,
-            time: String::new(),
+            ..CpuInfo::test_default()
         }
     }
 
     /// A 24-core Apple Silicon CPU (16P + 8E). At width 120 the core count
-    /// exceeds the collapse threshold (16), so the panel uses the PECluster
+    /// exceeds the collapse threshold (16), so the panel uses the TierCluster
     /// strategy -- the scenario the multirow "no growth" target is written for.
     fn make_apple_cpu_many_cores() -> CpuInfo {
         let mut per_core = Vec::new();
@@ -917,6 +913,7 @@ mod tests {
                 core_id: i as u32,
                 core_type: CoreType::Efficiency,
                 utilization: 20.0 + i as f64 * 3.0,
+                tier_index: None,
             });
         }
         for i in 0..16 {
@@ -924,6 +921,7 @@ mod tests {
                 core_id: (8 + i) as u32,
                 core_type: CoreType::Performance,
                 utilization: 40.0 + i as f64 * 2.0,
+                tier_index: None,
             });
         }
         let mut cpu = make_apple_cpu();
@@ -1191,6 +1189,37 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_compact_badge_is_not_truncated_for_high_power_gpus() {
+        // Regression: an MI300X idles near 140 W and peaks at 750 W, so its
+        // Pkg axis badge (e.g. `150-750`) is wider than the 5-column minimum
+        // and used to render as `150-7`.
+        let mut state = make_nvidia_state();
+        state.package_power_history.clear();
+        for i in 0..20 {
+            state
+                .package_power_history
+                .push_back(140.0 + i as f64 * 32.0);
+        }
+        let badge = build_rows(&state, false, false, false)
+            .into_iter()
+            .find(|row| row.short_label == "Pkg")
+            .expect("Pkg row")
+            .min_max_str;
+        assert!(badge.chars().count() > COMPACT_BADGE_WIDTH, "{badge}");
+
+        for &w in &[60usize, 80, 110] {
+            let lines = render_gpu_lines(&state, w, TALL_ROWS);
+            assert!(
+                lines.iter().any(|line| line.contains(&badge)),
+                "badge {badge} must render whole at width {w}"
+            );
+            for line in &lines {
+                assert_eq!(visible_width(line), w);
+            }
+        }
+    }
+
     /// Count the interleaved terminal lines emitted by the combined panel.
     fn combined_line_count(state: &AppState, cpu: &[CpuInfo], width: usize, rows: u16) -> usize {
         let mut buf: Vec<u8> = Vec::new();
@@ -1276,7 +1305,7 @@ mod tests {
         // multirow graphs consume the space the CPU half left blank, so there
         // is no net growth versus the fallback layout).
         let mut apple = make_apple_silicon_state();
-        // 24-core Apple Silicon -> PECluster at width 120.
+        // 24-core Apple Silicon -> TierCluster at width 120.
         let cpu = vec![make_apple_cpu_many_cores()];
         apple.cpu_info = cpu.clone();
         assert_eq!(combined_line_count(&apple, &cpu, 120, SHORT_ROWS), 7);

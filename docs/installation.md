@@ -39,6 +39,10 @@ sudo apt install all-smi
 
 The PPA provides automatic updates and is maintained for Ubuntu 22.04 (Jammy), 24.04 (Noble), and 26.04 (Resolute).
 
+all-smi does not install, require, or replace an NVIDIA driver. The package lists the driver as a `Suggests`, which apt does not install by default, so it installs alongside a driver you already have from any repository (the Ubuntu archive or NVIDIA's CUDA repository), and a host with no driver still installs cleanly. Install your driver first, then all-smi.
+
+Do not run `apt install --install-suggests all-smi` on a host whose NVIDIA driver comes from the CUDA repository. `--install-suggests` turns the `Suggests` hint into an installed set, and apt may resolve `nvidia-utils`/`nvidia-driver` to the Ubuntu archive's `*-server` packages, which can replace the CUDA-repo driver, remove its DKMS kernel module, and abort the install on a firmware file conflict. Plain `apt install all-smi` is the supported path.
+
 ## Option 3: Install via Debian Package
 
 For a compatible Debian-based distribution, download the `.deb` package built for your Ubuntu release and architecture from the [releases page](https://github.com/lablup/all-smi/releases):
@@ -122,6 +126,8 @@ all-smi does not ship a container image, and container deployment is not a suppo
   - AMD GPU support is available in **glibc builds only** (`x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`)
   - **Not available in musl builds** (`x86_64-unknown-linux-musl`, `aarch64-unknown-linux-musl`) due to library compatibility
 - **Runtime Companion Library:** Linux AMD monitoring is loaded at runtime from `liball_smi_amd.so`, the only artifact that links `libdrm.so.2` and `libdrm_amdgpu.so.1`. The main binary has no libdrm dependency and starts on every host; without the companion or AMD's userspace DRM libraries (`libdrm2 libdrm-amdgpu1` on Debian/Ubuntu, `libdrm` on RHEL/Fedora) it reports no AMD GPU, and `all-smi doctor --only amd` names what is missing. Release archives, Homebrew, and the Debian/PPA packages install the companion; `cargo install` does not
+- **gpu_metrics table ceiling:** the companion reads the amdgpu driver's `gpu_metrics` table through `libdrm_amdgpu_sys` 0.8.16, which parses format 1 content 0-5, format 2 content 0-4, and format 3 content 0. The `libamdgpu_top = "=0.11.5"` pin does not fix this ceiling, because `libamdgpu_top` depends on `libdrm_amdgpu_sys >= 0.8.14` and `Cargo.lock` resolves that parser independently, so a `cargo update` can move it without changing the pin. The parser-truth test in the AMD companion crate's reader tests compares the shared table against `GpuMetrics::from_raw` and fails when the two drift
+- **When the driver emits a newer table:** utilization falls back to the kernel's `gpu_busy_percent`, temperature to hwmon edge/junction, power to hwmon `power1_average`/`power1_input`, and frequency to hwmon `sclk`. A metric that has no hwmon counterpart reports its default (0 or none) rather than a warning. `all-smi doctor --only amd` reports the observed pair through `amd.gpu_metrics.revision`: `PASS` when the pinned parser supports it, `WARN` naming the pair, the card, and the ceiling when it does not, and `SKIP` when no card exposes `gpu_metrics`
 - **The `amd` cargo feature:** an accepted no-op kept for downstream manifest compatibility. It adds no dependency, and `--no-default-features` no longer removes AMD detection. Building the companion from source needs the libdrm development files; see [DEVELOPERS.md](../DEVELOPERS.md#the-amd-companion-library)
 - **Device access for API/snapshot/library use:** Membership in `video` and `render` can provide access to `/dev/dri` without root. This does not bypass the current local-mode privilege gate:
   ```bash
