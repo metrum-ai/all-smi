@@ -88,3 +88,4 @@ env.json
 # Agent instructions for all coding agents (Metrum AI)
 !AGENTS.md
 !CLAUDE.md
+.premia/
